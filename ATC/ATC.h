@@ -4,12 +4,11 @@
 #include <iostream>
 #include <atomic>
 #include <opencv2/opencv.hpp>
-#include <fstream>
-#include <queue>
 
-const unsigned int INIT_WIDTH(640), INIT_HEIGHT(480);
-const float INIT_FX(500.0f), INIT_FY(500.0f), INIT_CX(INIT_WIDTH/2), INIT_CY(INIT_HEIGHT/2);
+const unsigned int INIT_WIDTH(1280), INIT_HEIGHT(720);
+const float INIT_FX(500.0f), INIT_FY(500.0f), INIT_CX(INIT_WIDTH / 2), INIT_CY(INIT_HEIGHT / 2);
 const unsigned int INIT_FPS(30);
+
 
 //only store color/grey images
 class ImgData {
@@ -78,49 +77,37 @@ protected:
 	float landmark2D[68 * 2];
 	//gaze : x,y,z_left ; x,y,z_right 
 	float gazeVector[6];
-	//gaze_angle_x,y
-	float gaze_angle_x;
-	float gaze_angle_y;
 
-	//csv writer
-	std::ofstream outFile;
-	//frame number
-	unsigned int frameNumber;
-	//ear: the ratio of the eyes' width and height
+	//lyc
 	float ear;
-	//blink times
-	unsigned int blink_count;
-	//number of continuous frames in which ear is less than the THRESH
-	unsigned int cont_frames;
-
-	//used to record the recent blink
-	typedef struct blink {
-		int startFrame = -1;//眨眼开始帧号
-		int endFrame = -1;//眨眼结束帧号
-		unsigned int blinkTimeSum = 0;//这次眨眼之前的眨眼的持续时间之和（便于计算）
-		unsigned int interval = 0;//这次眨眼与上次的眨眼的间隔时间
-	}blink;
-	//用于记录当前眨眼的状态
-	blink currentBlink;
-	std::queue<blink> recentBlink;
-	float blinkFrequency = 0;
-	float blinkInterval = 0;
-	float blinkLastTime = 0;
-
-	FeatureHouse();
-	//calculate the distance of two landmarks in 2D
+	int blink_count;
+	int cont_frames;
+	float planeVector[3];
+	float planePoint[3];
+	float gazePoint[3];
+	FeatureHouse() {
+		cont_frames = 0;
+		blink_count = 0;
+		planeVector[0] = 0;
+		planeVector[1] = 0;
+		planeVector[2] = 1;
+		planePoint[0] = -1;
+		planePoint[1] = 0;
+		planePoint[2] = 0;
+	}
+	void GazePoint();
 	float GetDistance(int i, int j);
-	//calculate the ear
-	float EyeAspectRatio(float a, float b, float c);
+	float Eye_aspect_ratio(float a, float b, float c);
+	//lyc
 
 	//eye blink count
-	//unsigned int blink;
+	unsigned int blink;
 	std::mutex output;
 	//functions
 
 
 	//SetFeatures with mutex
-	bool SetFeature(void* face_model,void* parameters,cv::Mat &greyImg,cv::Mat &colorImg,float fx,float fy,float cx,float cy);	
+	bool SetFeature(void* face_model, void* parameters, cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy);
 	static FeatureHouse* GetInstance() {
 		if (instance == nullptr) {
 			instance = new FeatureHouse();
@@ -146,7 +133,7 @@ protected:
 class ATC
 {
 protected:
-	ATC() :threadContinue(true),t(nullptr),detection_success(false) {};
+	ATC() :threadContinue(true), t(nullptr), detection_success(false) {};
 	static ATC* instance;
 	static ImgData* imgDataInstance;
 	static FeatureHouse* fhInstance;
@@ -160,11 +147,11 @@ protected:
 	std::atomic<bool> detection_success;
 public:
 	~ATC();
-	static ATC* GetInstance(const std::string & exePath,bool useOpenFace=false) {
+	static ATC* GetInstance(const std::string & exePath, bool useOpenFace = false) {
 		if (instance == nullptr) {
 			instance = new ATC();
 			imgDataInstance = ImgData::GetInstance();
-			fhInstance=FeatureHouse::GetInstance();
+			fhInstance = FeatureHouse::GetInstance();
 			instance->useOpenFace = useOpenFace;
 			instance->parameters = nullptr;
 			instance->face_model = nullptr;

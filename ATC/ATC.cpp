@@ -3,14 +3,12 @@
 #include <chrono>
 #include "LandmarkCoreIncludes.h"
 #include "GazeEstimation.h"
-#include <iostream>
-#include <fstream>
-ImgData* ImgData::instance=nullptr;
-ImgData* ATC::imgDataInstance=nullptr;
+ImgData* ImgData::instance = nullptr;
+ImgData* ATC::imgDataInstance = nullptr;
 //PeopleFeature* PeopleFeature::instance = nullptr;
-FeatureHouse* FeatureHouse::instance=nullptr;
+FeatureHouse* FeatureHouse::instance = nullptr;
 ATC* ATC::instance = nullptr;
-FeatureHouse* ATC::fhInstance=nullptr;
+FeatureHouse* ATC::fhInstance = nullptr;
 
 #pragma region ImgDataDefine
 inline bool ImgData::GetColorImg(cv::Mat &c) {
@@ -61,7 +59,7 @@ bool ImgData::Open(int index, const std::string & fileName) {
 	Open(index);
 	outputFileName = fileName;
 	try {
-		isValid=colorWriter.open(fileName, CV_FOURCC('M', 'P', '4', '2'), fps, cv::Size(width, height));
+		isValid = colorWriter.open(fileName, CV_FOURCC('M', 'P', '4', '2'), fps, cv::Size(width, height));
 	}
 	catch (...) {
 		isValid = false;
@@ -87,52 +85,42 @@ bool ImgData::Open(const std::string & fileName) {
 
 #pragma region FeatureHouse
 
-#define EAR_THRESH 0.28
-#define EYE_FRAME_MIN 3
-#define EYE_FRAME_MAX 8
+#define EAR_THRESH 0.25
+#define EYE_FRAME 3
+void FeatureHouse::GazePoint()
+{
+	float parameTerflag;
+	float parameTer;
+	parameTerflag = gazeVector[0] * planeVector[0] + gazeVector[1] * planeVector[1] + gazeVector[2] * planeVector[2];
+	parameTer = ((planePoint[0] - pupilCenter3D[0])*planeVector[0] + (planePoint[1] - pupilCenter3D[1])*planeVector[1] + (planePoint[2] - pupilCenter3D[2])*planeVector[2]) / parameTerflag;
+	gazePoint[0] = pupilCenter3D[0] + gazeVector[0] * parameTer;
+	gazePoint[1] = pupilCenter3D[1] + gazeVector[1] * parameTer;
+	gazePoint[2] = pupilCenter3D[2] + gazeVector[2] * parameTer;
+}
 float FeatureHouse::GetDistance(int i, int j)
 {
 	return sqrt(pow(landmark2D[2 * (i - 1)] - landmark2D[2 * (j - 1)], 2) + pow(landmark2D[2 * (i - 1) + 1] - landmark2D[2 * (j - 1) + 1], 2));
 }
 
-float FeatureHouse::EyeAspectRatio(float a, float b, float c) 
-{
+float FeatureHouse::Eye_aspect_ratio(float a, float b, float c) {
 	return (a + b) / (2 * c);
 }
 
-FeatureHouse::FeatureHouse() {
-	frameNumber = 0;
-	cont_frames = 0;
-	blink_count = 0;
 
-	outFile.open("test.csv", ios::out);
-	outFile << "ear" << ',' << "blink" << ',' << "left_eye" << ',' << "right_eye" << ',';
-	for (int i = 37; i <= 48; i++) {
-		outFile << "x" << i << ',' << "y" << i << ',';
-	}
-	outFile << endl;
-}
-
-bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy) {
+bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy) {
 	static cv::Point3f gazeDirection0(0, 0, -1);
 	static cv::Point3f gazeDirection1(0, 0, -1);
-	cv::Vec2f gaze_angle(0, 0);
 	static std::vector<cv::Point3f> eyeLandmark3D;
 	auto tempFaceModel = reinterpret_cast<LandmarkDetector::CLNF*>(face_model);
 	auto tempParameter = reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters);
 	//openface calculate
 	bool detection_success = LandmarkDetector::DetectLandmarksInVideo(colorImg, *tempFaceModel, *tempParameter, greyImg);
-	ear = 0;
-	frameNumber++;
 	if (detection_success)
 	{
 		if (tempFaceModel->eye_model)
 		{
 			GazeAnalysis::EstimateGaze(*tempFaceModel, gazeDirection0, fx, fy, cx, cy, true);
 			GazeAnalysis::EstimateGaze(*tempFaceModel, gazeDirection1, fx, fy, cx, cy, false);
-			gaze_angle = GazeAnalysis::GetGazeAngle(gazeDirection0, gazeDirection1);
-			gaze_angle_x = gaze_angle[0];
-			gaze_angle_y = gaze_angle[1];
 			eyeLandmark3D = LandmarkDetector::Calculate3DEyeLandmarks(*tempFaceModel, fx, fy, cx, cy);
 		}
 		// Work out the pose of the head from the tracked model
@@ -140,70 +128,38 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 
 		//data copy zone ,use fhInstance->output mutex
 		std::lock_guard<std::mutex> lm(output);
-
-
 		float tempLandmark[136];
 		std::copy(reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.datastart)
 			, reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.dataend)
 			, tempLandmark);
-		//将landmark顺序进行调整，调整成x1 y1 x2 y2...x68 y68
 		for (int i = 0; i < 68; i++) {
 			landmark2D[2 * i] = tempLandmark[i];
 			landmark2D[2 * i + 1] = tempLandmark[i + 68];
 		}
 
-		//左右眼分别计算EAR，再求平均值
+		//lyc
 		float left_eye, right_eye;
-		left_eye = EyeAspectRatio(GetDistance(38, 42), GetDistance(39, 41), GetDistance(37, 40));
-		right_eye = EyeAspectRatio(GetDistance(44, 48), GetDistance(45, 47), GetDistance(43, 46));
+		left_eye = Eye_aspect_ratio(GetDistance(38, 42), GetDistance(39, 41), GetDistance(37, 40));
+		right_eye = Eye_aspect_ratio(GetDistance(44, 48), GetDistance(45, 47), GetDistance(43, 46));
 		ear = (left_eye + right_eye) / 2;
-		//cout << ear << endl;
-
-		//如果EAR低于EAR_THRESH的次数在某个区间内，就记为1次眨眼
-		//同时记录最近10次眨眼的开始帧数、结束帧数，并计算出眨眼时间总和（方便计算）和与上次眨眼的间隔时间
+		//cout << left_eye << " " << right_eye << endl;
 		if (ear <= EAR_THRESH) {
 			cont_frames++;
-			if (currentBlink.startFrame == -1) {
-				currentBlink.startFrame = frameNumber;
-			}
+			//cout <<"ear: "<< ear << endl;
 		}
 		else {
-			if (cont_frames >= EYE_FRAME_MIN && cont_frames < EYE_FRAME_MAX) {
+			if (cont_frames >= EYE_FRAME) {
 				blink_count++;
-				currentBlink.endFrame = frameNumber;
-				currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
-				if (!recentBlink.empty()) {
-					currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
-					currentBlink.interval = currentBlink.startFrame - recentBlink.back().endFrame - 1;
-				}
-				else
-				{
-					currentBlink.interval = currentBlink.startFrame;//初始化第一项的interval，为开始帧的序号
-				}
-				if (recentBlink.size() >= 10)//如果队列内元素数量大于10，从眨眼时间总和中减去该项并弹出
-				{
-					currentBlink.blinkTimeSum -= (recentBlink.front().endFrame - recentBlink.front().startFrame + 1);					
-					recentBlink.pop();
-				}
-				recentBlink.push(currentBlink);
+				cout << blink_count << endl;
 			}
 			cont_frames = 0;
-			currentBlink.startFrame = -1;
-			currentBlink.blinkTimeSum = 0;
 		}
-
-		//将数据写入csv文件，作为记录
-		outFile << ear << ',' << blink_count << ',' << left_eye << ',' << right_eye << ',';
-		for (int i = 37; i <= 48; i++) {
-			outFile << landmark2D[(i - 1) * 2] << ',' << landmark2D[(i - 1) * 2 + 1] << ',';
-		}
-		outFile << endl;
-
+		//lyc
 		/*float temp;
 		for (int i = 1; i < 68; i += 2) {
-			temp = landmark2D[i];
-			landmark2D[i] = landmark2D[i + 67];
-			landmark2D[i + 67] = temp;
+		temp = landmark2D[i];
+		landmark2D[i] = landmark2D[i + 67];
+		landmark2D[i + 67] = temp;
 		}*/
 		for (int i = 0; i < pose_estimate.channels; ++i) {
 			headpose3D[i] = pose_estimate[i];
@@ -231,22 +187,15 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		gazeVector[4] = gazeDirection1.y;
 		gazeVector[5] = gazeDirection1.z;
 	}
-	if (!recentBlink.empty() && frameNumber % 30 == 0) {
-		//要求队列非空且每30帧刷新一次数据
-		//计算眨眼频率，队列中眨眼次数 / 队列尾-队列头+队头的interval，再把帧数换算成时间1800帧=1min
-		blinkFrequency = (float)(recentBlink.size()) * 1800 / (frameNumber - recentBlink.front().startFrame + 1 + recentBlink.front().interval);
-		//计算眨眼间隔，队列尾-队列头+队头的interval-眨眼消耗的时间 / 队列中眨眼次数
-		blinkInterval = (float)(frameNumber - recentBlink.front().startFrame + 1 + recentBlink.front().interval - recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
-		//计算眨眼持续时间，眨眼消耗的时间 / 队列中眨眼次数
-		blinkLastTime = (float)(recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
-		//cout << blinkLastTime << " " << recentBlink.back().blinkTimeSum <<" "<< recentBlink.size()<< endl;
-	}
+	GazePoint();
+
+	cout << gazePoint[0] << ' ' << gazePoint[1] << ' ' << gazePoint[2] << endl;
 	return detection_success;
 }
 
 void FeatureHouse::GetLandmark2d(float landmark2d[68 * 2]) {
 	std::lock_guard<std::mutex> lm(output);
-	std::copy(landmark2D,landmark2D + 68 * 2, landmark2d);
+	std::copy(landmark2D, landmark2D + 68 * 2, landmark2d);
 }
 
 void FeatureHouse::GetPupilCenter3d(float pupilCenter3d[6]) {
@@ -268,60 +217,31 @@ void FeatureHouse::GetHeadPose(float headpose[6]) {
 #pragma region ATCDefine
 void ATC::ATC_Thread() {
 	std::cout << "threadStart" << std::endl;
-	cv::VideoWriter writer("test.avi", CV_FOURCC('M', 'P', '4', '2'), 30, cv::Size(imgDataInstance->width, imgDataInstance->height));
 	while (threadContinue) {
 		//std::cout << "threadContinue "<< std::endl;
-		cv::Mat greyImg,colorImg;
+		cv::Mat greyImg, colorImg;
 		if (imgDataInstance->SetImg()) {
 			imgDataInstance->GetGreyImg(greyImg);
 			if (useOpenFace) {
 				GetColorImg(colorImg);
 				detection_success = fhInstance->SetFeature(face_model, parameters, greyImg, colorImg, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
-				
-				//添加文字
-				char text[255];
-				sprintf(text, "%.4f", fhInstance->ear);
-				string earStr("EAR:");
-				earStr += text;
-				sprintf(text, "%u", fhInstance->blink_count);
-				string blinkStr("BLINK:");
-				blinkStr += text;
-				sprintf(text, "%.2f", fhInstance->blinkFrequency);
-				string freStr("FREQ:");
-				freStr += text;
-				freStr += "ts/min";
-				sprintf(text, "%.2f", fhInstance->blinkInterval);
-				string interStr("INTER:");
-				interStr += text;
-				interStr += "s/ts";
-				sprintf(text, "%.2f", fhInstance->blinkLastTime);
-				string lastStr("LAST:");
-				lastStr += text;
-				lastStr += "s/ts";
 
-				sprintf(text, "%.2f", fhInstance->gaze_angle_x);
-				string gazeXStr("GAZE_X:");
-				gazeXStr += text;
-				sprintf(text, "%.2f", fhInstance->gaze_angle_y);
-				string gazeYStr("GAZE_Y:");
-				gazeYStr += text;
-				cv::putText(colorImg, earStr, cv::Point(20, 40), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, blinkStr, cv::Point(350, 40), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, freStr, cv::Point(20, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, interStr, cv::Point(350, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, lastStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, gazeXStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, gazeYStr, cv::Point(350, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				
-				//绘制眼部特征点
-				if (detection_success) {
-					for (int i = 36; i <= 47; i++) {
-						cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
-						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
-					}
+				char fpsC[255];
+				char fpsB[255];
+				sprintf(fpsC, "%f", fhInstance->ear);
+				string fpsSt("EAR:");
+				fpsSt += fpsC;
+				sprintf(fpsB, "%d", fhInstance->blink_count);
+				string fpsStr("BlINK:");
+				fpsStr += fpsB;
+				cv::putText(colorImg, fpsSt, cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, fpsStr, cv::Point(350, 20), CV_FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1, CV_AA);
+				for (int i = 36; i <= 47; i++) {
+					cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+					cv::Point t((imgDataInstance->width / 2 - fhInstance->gazePoint[0]) * 1, (fhInstance->gazePoint[1]) * 1);
+					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					cv::circle(colorImg, t, 5, cv::Scalar(0, 0, 255), -1);
 				}
-
-				writer << colorImg;
 				cv::imshow("test", colorImg);
 				cv::waitKey(5);
 			}
@@ -330,7 +250,6 @@ void ATC::ATC_Thread() {
 			break;
 		}
 	}
-	fhInstance->outFile.close();
 	std::cout << "thread exit" << std::endl;
 }
 
@@ -352,7 +271,7 @@ cv::Size ATC::StartThread(int index) {
 
 cv::Size ATC::StartThread(int index, const std::string & fileName) {
 	threadContinue = true;
-	if(imgDataInstance->Open(index, fileName)) {
+	if (imgDataInstance->Open(index, fileName)) {
 		t = new std::thread(std::bind(&ATC::ATC_Thread, this));
 		std::cout << imgDataInstance->width << " " << imgDataInstance->height << std::endl;
 		return cv::Size(imgDataInstance->width, imgDataInstance->height);
@@ -391,7 +310,7 @@ void ATC::StopThread() {
 
 bool ATC::GetColorImg(cv::Mat & c)
 {
-	return threadContinue&&imgDataInstance->GetColorImg(c);
+	return threadContinue && imgDataInstance->GetColorImg(c);
 }
 
 bool ATC::GetLandmark2d(float landmark2d[68 * 2]) {
@@ -415,6 +334,8 @@ bool ATC::GetGazeVector(float gaze[6]) {
 	return true;
 }
 
+
+
 bool ATC::GetHeadPose(float headpose[6]) {
 	if (!useOpenFace || !detection_success)
 		return false;
@@ -427,7 +348,7 @@ bool ATC::OpenFaceInit(const std::string & exePath) {
 	parameters = new LandmarkDetector::FaceModelParameters(arguments);
 	// The modules that are being used for tracking
 	std::cout << reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location << std::endl;
-	face_model=new LandmarkDetector::CLNF(reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location);
+	face_model = new LandmarkDetector::CLNF(reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location);
 	if (!reinterpret_cast<LandmarkDetector::CLNF*>(face_model)->loaded_successfully)
 	{
 		cout << "ERROR: Could not load the landmark detector" << endl;
@@ -450,17 +371,18 @@ ATC::~ATC() {
 
 #pragma endregion
 
-ofstream outFile;
-
-int main(int argc, char **argv) 
+int main(int argc, char **argv)
 {
 	ATC* a = ATC::GetInstance(argv[0], true);
-	//a->StartThread("F:\\Project\\ATC\\ATC\\x64\\Release\\YDXJ0004_converter.wmv");
-	//a->StartThread("E:\\LYC\\文件\\大学\\学习\\实验室\\陆峰\\人脸识别_空管\\07_12空管实验数据采集\\剪辑_lyc\\管制2摄像头采集\\2_1.mp4");
-	//a->StartThread("F:\\FFOutput\\2_1.avi");
-	//a->StartThread(0, "test.avi");
 	a->StartThread(0);
-	
+
+	/*cv::VideoCapture captue(0);
+	cv::Mat frame;
+	while (1) {
+	captue >> frame;
+	imshow("我的摄像头", frame);
+	cv::waitKey(30);
+	}*/
 	system("pause");
 	return 0;
 }
