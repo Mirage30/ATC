@@ -261,6 +261,9 @@ __pycache__/
 *.pyc
 
 #My project
-ATC/
-!ATC.cpp
-!ATC.h
+/ATC/data
+/ATC/x64
+/ATC/OpenFace-SDK
+/ATC.sln
+*.avi
+*.csv
