@@ -107,9 +107,20 @@ FeatureHouse::FeatureHouse() {
 
 	outFile.open("test.csv", ios::out);
 	outFile << "ear" << ',' << "blink" << ',' << "left_eye" << ',' << "right_eye" << ',';
-	for (int i = 37; i <= 48; i++) {
-		outFile << "x" << i << ',' << "y" << i << ',';
+	outFile << "gaze_0_x" << ',' << "gaze_0_y" << ',' << "gaze_0_z" << ',' << "gaze_1_x" << ',' << "gaze_1_y" << ',' << "gaze_1_z" << ',' << " gaze_angle_x" << ',' << " gaze_angle_y" << ',';
+	for (int i = 0; i < 56; i++) {
+		outFile << " eye_lmk_x_" << i << ',' << "eye_lmk_y_" << i << ',';
 	}
+	for (int i = 0; i < 56; i++) {
+		outFile << " eye_lmk_X_" << i << ',' << "eye_lmk_Y_" << i << ',' << "eye_lmk_Z_" << i << ',';
+	}
+	for (int i = 0; i < 68; i++) {
+		outFile << "x_" << i << ',' << "y_" << i << ',';
+	}
+	for (int i = 0; i < 68; i++) {
+		outFile << "X_" << i << ',' << "Y_" << i << ',' << "Z_" << i << ',';
+	}
+	outFile << "pose_Tx" << ',' << "pose_Ty" << ',' << "pose_Tz" << ',' << "pose_Rx" << ',' << "pose_Ry" << ',' << "pose_Rz" << ',';
 	outFile << endl;
 }
 
@@ -117,6 +128,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 	static cv::Point3f gazeDirection0(0, 0, -1);
 	static cv::Point3f gazeDirection1(0, 0, -1);
 	cv::Vec2f gaze_angle(0, 0);
+	static std::vector<cv::Point2f> eyeLandmark2D;
 	static std::vector<cv::Point3f> eyeLandmark3D;
 	auto tempFaceModel = reinterpret_cast<LandmarkDetector::CLNF*>(face_model);
 	auto tempParameter = reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters);
@@ -133,7 +145,18 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 			gaze_angle = GazeAnalysis::GetGazeAngle(gazeDirection0, gazeDirection1);
 			gaze_angle_x = gaze_angle[0];
 			gaze_angle_y = gaze_angle[1];
+			eyeLandmark2D = LandmarkDetector::CalculateAllEyeLandmarks(*tempFaceModel);
 			eyeLandmark3D = LandmarkDetector::Calculate3DEyeLandmarks(*tempFaceModel, fx, fy, cx, cy);
+
+			for (int i = 0; i < eyeLandmark2D.size(); i++) {
+				eye_Landmark2D[2 * i] = eyeLandmark2D[i].x;
+				eye_Landmark2D[2 * i + 1] = eyeLandmark2D[i].y;
+			}
+			for (int i = 0; i < eyeLandmark3D.size(); i++) {
+				eye_Landmark3D[3 * i] = eyeLandmark3D[i].x;
+				eye_Landmark3D[3 * i + 1] = eyeLandmark3D[i].y;
+				eye_Landmark3D[3 * i + 2] = eyeLandmark3D[i].z;
+			}
 		}
 		// Work out the pose of the head from the tracked model
 		cv::Vec6d pose_estimate = LandmarkDetector::GetPose(*tempFaceModel, fx, fy, cx, cy);
@@ -141,7 +164,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		//data copy zone ,use fhInstance->output mutex
 		std::lock_guard<std::mutex> lm(output);
 
-
+		//landmark2D
 		float tempLandmark[136];
 		std::copy(reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.datastart)
 			, reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.dataend)
@@ -150,6 +173,18 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		for (int i = 0; i < 68; i++) {
 			landmark2D[2 * i] = tempLandmark[i];
 			landmark2D[2 * i + 1] = tempLandmark[i + 68];
+		}
+
+		//landmark3D
+		cv::Mat1f tempMat = tempFaceModel->GetShape(fx, fy, cx, cy);
+		float tempLandmark3D[204];
+		std::copy(reinterpret_cast<const float*>(tempMat.datastart)
+			, reinterpret_cast<const float*>(tempMat.dataend)
+			, tempLandmark3D);
+		for (int i = 0; i < 68; i++) {
+			landmark3D[3 * i] = tempLandmark3D[i];
+			landmark3D[3 * i + 1] = tempLandmark3D[i + 68];
+			landmark3D[3 * i + 2] = tempLandmark3D[i + 136];
 		}
 
 		//左右眼分别计算EAR，再求平均值
@@ -192,19 +227,6 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 			currentBlink.blinkTimeSum = 0;
 		}
 
-		//将数据写入csv文件，作为记录
-		outFile << ear << ',' << blink_count << ',' << left_eye << ',' << right_eye << ',';
-		for (int i = 37; i <= 48; i++) {
-			outFile << landmark2D[(i - 1) * 2] << ',' << landmark2D[(i - 1) * 2 + 1] << ',';
-		}
-		outFile << endl;
-
-		/*float temp;
-		for (int i = 1; i < 68; i += 2) {
-			temp = landmark2D[i];
-			landmark2D[i] = landmark2D[i + 67];
-			landmark2D[i + 67] = temp;
-		}*/
 		for (int i = 0; i < pose_estimate.channels; ++i) {
 			headpose3D[i] = pose_estimate[i];
 		}
@@ -230,6 +252,29 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		gazeVector[3] = gazeDirection1.x;
 		gazeVector[4] = gazeDirection1.y;
 		gazeVector[5] = gazeDirection1.z;
+
+		//将数据写入csv文件，作为记录
+		outFile << ear << ',' << blink_count << ',' << left_eye << ',' << right_eye << ',';
+		for (int i = 0; i < 6; i++) {
+			outFile << gazeVector[i] << ',';
+		}
+		outFile << gaze_angle_x << ',' << gaze_angle_y << ',';
+		for (int i = 0; i < 56; i++) {
+			outFile << eye_Landmark2D[i * 2] << ',' << eye_Landmark2D[i * 2 + 1] << ',';
+		}
+		for (int i = 0; i < 56; i++) {
+			outFile << eye_Landmark3D[i * 3] << ',' << eye_Landmark3D[i * 3 + 1] << ',' << eye_Landmark3D[i * 3 + 2] << ',';
+		}
+		for (int i = 0; i < 68; i++) {
+			outFile << landmark2D[i * 2] << ',' << landmark2D[i * 2 + 1] << ',';
+		}
+		for (int i = 0; i < 68; i++) {
+			outFile << landmark3D[i * 3] << ',' << landmark3D[i * 3 + 1] << ',' << landmark3D[i * 3 + 2] << ',';
+		}
+		for (int i = 0; i < 6; i++) {
+			outFile << headpose3D[i] << ',';
+		}
+		outFile << endl;
 	}
 	if (!recentBlink.empty() && frameNumber % 30 == 0) {
 		//要求队列非空且每30帧刷新一次数据
@@ -299,19 +344,19 @@ void ATC::ATC_Thread() {
 				lastStr += text;
 				lastStr += "s/ts";
 
-				sprintf(text, "%.2f", fhInstance->gaze_angle_x);
+				/*sprintf(text, "%.2f", fhInstance->gaze_angle_x);
 				string gazeXStr("GAZE_X:");
 				gazeXStr += text;
 				sprintf(text, "%.2f", fhInstance->gaze_angle_y);
 				string gazeYStr("GAZE_Y:");
-				gazeYStr += text;
+				gazeYStr += text;*/
 				cv::putText(colorImg, earStr, cv::Point(20, 40), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, blinkStr, cv::Point(350, 40), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, freStr, cv::Point(20, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, interStr, cv::Point(350, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, lastStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, gazeXStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, gazeYStr, cv::Point(350, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				//cv::putText(colorImg, gazeXStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				//cv::putText(colorImg, gazeYStr, cv::Point(350, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				
 				//绘制眼部特征点
 				if (detection_success) {

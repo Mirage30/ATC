@@ -76,11 +76,16 @@ protected:
 	float pupilCenter3D[6];
 	//x1,y1,x2,y2.....x68,y68
 	float landmark2D[68 * 2];
+	//X1,Y1,Z1,X2...X68,Y68,Z68
+	float landmark3D[68 * 3];
 	//gaze : x,y,z_left ; x,y,z_right 
 	float gazeVector[6];
 	//gaze_angle_x,y
 	float gaze_angle_x;
 	float gaze_angle_y;
+	//eyelandmark
+	float eye_Landmark2D[56 * 2];
+	float eye_Landmark3D[56 * 3];
 
 	//csv writer
 	std::ofstream outFile;
