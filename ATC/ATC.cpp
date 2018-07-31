@@ -92,12 +92,27 @@ bool ImgData::Open(const std::string & fileName) {
 #define EYE_FRAME_MAX 8
 float FeatureHouse::GetDistance(int i, int j)
 {
-	return sqrt(pow(landmark2D[2 * (i - 1)] - landmark2D[2 * (j - 1)], 2) + pow(landmark2D[2 * (i - 1) + 1] - landmark2D[2 * (j - 1) + 1], 2));
+	return sqrt(pow(landmark2D[2 * i] - landmark2D[2 * j], 2) + pow(landmark2D[2 * i + 1] - landmark2D[2 * j + 1], 2));
+}
+
+float FeatureHouse::GetDistance3D(int i, int j)
+{
+	return sqrt(pow(landmark3D[3 * i] - landmark3D[3 * j], 2) + pow(landmark3D[3 * i + 1] - landmark3D[3 * j + 1], 2) + pow(landmark3D[3 * i + 2] - landmark3D[3 * j + 2], 2));
 }
 
 float FeatureHouse::EyeAspectRatio(float a, float b, float c) 
 {
 	return (a + b) / (2 * c);
+}
+
+float FeatureHouse::GetEyeDistance(int i, int j)
+{
+	return sqrt(pow(eye_Landmark2D[2 * i] - eye_Landmark2D[2 * j], 2) + pow(eye_Landmark2D[2 * i + 1] - eye_Landmark2D[2 * j + 1], 2));
+}
+
+float FeatureHouse::GetEyeDistance3D(int i, int j)
+{
+	return sqrt(pow(eye_Landmark3D[3 * i] - eye_Landmark3D[3* j], 2) + pow(eye_Landmark3D[3 * i + 1] - eye_Landmark3D[3 * j + 1], 2) + pow(eye_Landmark3D[3 * i + 2] - eye_Landmark3D[3 * j + 2], 2));
 }
 
 FeatureHouse::FeatureHouse() {
@@ -106,6 +121,7 @@ FeatureHouse::FeatureHouse() {
 	blink_count = 0;
 
 	outFile.open("test.csv", ios::out);
+	outFile << "eye_diameter" << ',' << "eye_ratio" << ',';
 	outFile << "ear" << ',' << "blink" << ',' << "left_eye" << ',' << "right_eye" << ',';
 	outFile << "gaze_0_x" << ',' << "gaze_0_y" << ',' << "gaze_0_z" << ',' << "gaze_1_x" << ',' << "gaze_1_y" << ',' << "gaze_1_z" << ',' << " gaze_angle_x" << ',' << " gaze_angle_y" << ',';
 	for (int i = 0; i < 56; i++) {
@@ -187,12 +203,31 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 			landmark3D[3 * i + 2] = tempLandmark3D[i + 136];
 		}
 
+		//求瞳孔变化
+		float left_eye_small_diameter = (GetEyeDistance3D(20, 24) + GetEyeDistance3D(21, 25) + GetEyeDistance3D(22, 26) + GetEyeDistance3D(23, 27)) / 4;
+		float right_eye_small_diameter = (GetEyeDistance3D(48, 52) + GetEyeDistance3D(49, 53) + GetEyeDistance3D(50, 54) + GetEyeDistance3D(51, 55)) / 4;
+		float left_eye_big_diameter = (GetEyeDistance3D(0, 4) + GetEyeDistance3D(1, 5) + GetEyeDistance3D(2, 6) + GetEyeDistance3D(3, 7)) / 4;
+		float right_eye_big_diameter = (GetEyeDistance3D(28, 32) + GetEyeDistance3D(29, 33) + GetEyeDistance3D(30, 34) + GetEyeDistance3D(31, 35)) / 4;
+		float left_ratio = left_eye_small_diameter / left_eye_big_diameter;
+		float right_ratio = right_eye_small_diameter / right_eye_big_diameter;
+		//瞳孔直径
+		eye_diameter = (left_eye_small_diameter + right_eye_small_diameter) / 2;
+		float eye_diameter_big = (left_eye_big_diameter + right_eye_big_diameter) / 2;
+		eye_ratio = (left_ratio + right_ratio) / 2;
+		//cout << left_eye_big_diameter << " " << left_eye_small_diameter << " " << right_eye_big_diameter << " " << right_eye_small_diameter << endl;
+		//cout << eye_diameter << " " << eye_diameter_big << " " << left_ratio << " " << right_ratio << endl;
+
+
 		//左右眼分别计算EAR，再求平均值
-		float left_eye, right_eye;
+		/*float left_eye, right_eye;
 		left_eye = EyeAspectRatio(GetDistance(38, 42), GetDistance(39, 41), GetDistance(37, 40));
 		right_eye = EyeAspectRatio(GetDistance(44, 48), GetDistance(45, 47), GetDistance(43, 46));
+		ear = (left_eye + right_eye) / 2;*/
+
+		float left_eye, right_eye;
+		left_eye = EyeAspectRatio(GetDistance3D(37, 41), GetDistance3D(38, 40), GetDistance3D(36, 39));
+		right_eye = EyeAspectRatio(GetDistance3D(43, 47), GetDistance3D(44, 46), GetDistance3D(42, 45));
 		ear = (left_eye + right_eye) / 2;
-		//cout << ear << endl;
 
 		//如果EAR低于EAR_THRESH的次数在某个区间内，就记为1次眨眼
 		//同时记录最近10次眨眼的开始帧数、结束帧数，并计算出眨眼时间总和（方便计算）和与上次眨眼的间隔时间
@@ -254,6 +289,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		gazeVector[5] = gazeDirection1.z;
 
 		//将数据写入csv文件，作为记录
+		outFile << eye_diameter << ',' << eye_ratio << ',';
 		outFile << ear << ',' << blink_count << ',' << left_eye << ',' << right_eye << ',';
 		for (int i = 0; i < 6; i++) {
 			outFile << gazeVector[i] << ',';
@@ -344,6 +380,13 @@ void ATC::ATC_Thread() {
 				lastStr += text;
 				lastStr += "s/ts";
 
+				sprintf(text, "%.4f", fhInstance->eye_diameter);
+				string diaStr("EyeDia:");
+				diaStr += text;
+				sprintf(text, "%.4f", fhInstance->eye_ratio);
+				string ratStr("EyeRat:");
+				ratStr += text;
+
 				/*sprintf(text, "%.2f", fhInstance->gaze_angle_x);
 				string gazeXStr("GAZE_X:");
 				gazeXStr += text;
@@ -355,8 +398,8 @@ void ATC::ATC_Thread() {
 				cv::putText(colorImg, freStr, cv::Point(20, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, interStr, cv::Point(350, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, lastStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				//cv::putText(colorImg, gazeXStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				//cv::putText(colorImg, gazeYStr, cv::Point(350, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, diaStr, cv::Point(350, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, ratStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				
 				//绘制眼部特征点
 				if (detection_success) {
@@ -365,6 +408,20 @@ void ATC::ATC_Thread() {
 						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
 					}
 				}
+
+				//瞳孔
+				/*if (detection_success) {
+					for (int i = 48; i <= 55; i++) {
+						cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					}
+				}*/
+				/*if (detection_success) {
+					for (int i = 20; i <= 27; i++) {
+						cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					}
+				}*/
 
 				writer << colorImg;
 				cv::imshow("test", colorImg);
@@ -502,7 +559,7 @@ int main(int argc, char **argv)
 	ATC* a = ATC::GetInstance(argv[0], true);
 	//a->StartThread("F:\\Project\\ATC\\ATC\\x64\\Release\\YDXJ0004_converter.wmv");
 	//a->StartThread("E:\\LYC\\文件\\大学\\学习\\实验室\\陆峰\\人脸识别_空管\\07_12空管实验数据采集\\剪辑_lyc\\管制2摄像头采集\\2_1.mp4");
-	//a->StartThread("F:\\FFOutput\\2_1.avi");
+	//a->StartThread("2_1.mp4");
 	//a->StartThread(0, "test.avi");
 	a->StartThread(0);
 	

@@ -87,6 +87,11 @@ protected:
 	float eye_Landmark2D[56 * 2];
 	float eye_Landmark3D[56 * 3];
 
+	//瞳孔直径
+	float eye_diameter;
+	//瞳孔和虹膜的比值
+	float eye_ratio;
+
 	//csv writer
 	std::ofstream outFile;
 	//frame number
@@ -115,8 +120,14 @@ protected:
 	FeatureHouse();
 	//calculate the distance of two landmarks in 2D
 	float GetDistance(int i, int j);
+	//calculate the distance of two landmarks in 3D
+	float GetDistance3D(int i, int j);
 	//calculate the ear
 	float EyeAspectRatio(float a, float b, float c);
+	//calculate the distance of two eyelandmarks in 2D
+	float GetEyeDistance(int i, int j);
+	//calculate the distance of two eyelandmarks in 3D
+	float GetEyeDistance3D(int i, int j);
 
 	//eye blink count
 	//unsigned int blink;
