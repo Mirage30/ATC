@@ -107,15 +107,17 @@ protected:
 	typedef struct blink {
 		int startFrame = -1;//眨眼开始帧号
 		int endFrame = -1;//眨眼结束帧号
-		unsigned int blinkTimeSum = 0;//这次眨眼之前的眨眼的持续时间之和（便于计算）
-		unsigned int interval = 0;//这次眨眼与上次的眨眼的间隔时间
+		unsigned int blinkTimeSum = 0;//这次眨眼以及之前的眨眼的持续时间之和（便于计算）
+		//unsigned int interval = 0;//这次眨眼与上次的眨眼的间隔时间
 	}blink;
-	//用于记录当前眨眼的状态
+	//用于记录当前眨眼的状态，方便入队
 	blink currentBlink;
 	std::queue<blink> recentBlink;
 	float blinkFrequency = 0;
 	float blinkInterval = 0;
 	float blinkLastTime = 0;
+	//perclos：闭眼的帧数/总帧数
+	float perclos = 0;
 
 	FeatureHouse();
 	//calculate the distance of two landmarks in 2D

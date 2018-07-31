@@ -11,6 +11,8 @@ ImgData* ATC::imgDataInstance=nullptr;
 FeatureHouse* FeatureHouse::instance=nullptr;
 ATC* ATC::instance = nullptr;
 FeatureHouse* ATC::fhInstance=nullptr;
+using std::cout;
+using std::endl;
 
 #pragma region ImgDataDefine
 inline bool ImgData::GetColorImg(cv::Mat &c) {
@@ -90,6 +92,8 @@ bool ImgData::Open(const std::string & fileName) {
 #define EAR_THRESH 0.28
 #define EYE_FRAME_MIN 3
 #define EYE_FRAME_MAX 8
+//timeslice时间片 帧数 一秒30帧
+#define TIMESLICE 900
 float FeatureHouse::GetDistance(int i, int j)
 {
 	return sqrt(pow(landmark2D[2 * i] - landmark2D[2 * j], 2) + pow(landmark2D[2 * i + 1] - landmark2D[2 * j + 1], 2));
@@ -229,6 +233,12 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		right_eye = EyeAspectRatio(GetDistance3D(43, 47), GetDistance3D(44, 46), GetDistance3D(42, 45));
 		ear = (left_eye + right_eye) / 2;
 
+		//维护队列，如果眨眼已经过期，则弹出队列
+		while (!recentBlink.empty() && ((int)frameNumber - TIMESLICE > recentBlink.front().startFrame)) {
+			recentBlink.back().blinkTimeSum -= (recentBlink.front().endFrame - recentBlink.front().startFrame + 1);
+			recentBlink.pop();
+		}
+
 		//如果EAR低于EAR_THRESH的次数在某个区间内，就记为1次眨眼
 		//同时记录最近10次眨眼的开始帧数、结束帧数，并计算出眨眼时间总和（方便计算）和与上次眨眼的间隔时间
 		if (ear <= EAR_THRESH) {
@@ -244,19 +254,20 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 				currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
 				if (!recentBlink.empty()) {
 					currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
-					currentBlink.interval = currentBlink.startFrame - recentBlink.back().endFrame - 1;
+					//currentBlink.interval = currentBlink.startFrame - recentBlink.back().endFrame - 1;
 				}
-				else
-				{
-					currentBlink.interval = currentBlink.startFrame;//初始化第一项的interval，为开始帧的序号
-				}
-				if (recentBlink.size() >= 10)//如果队列内元素数量大于10，从眨眼时间总和中减去该项并弹出
-				{
-					currentBlink.blinkTimeSum -= (recentBlink.front().endFrame - recentBlink.front().startFrame + 1);					
-					recentBlink.pop();
-				}
+				//else
+				//{
+				//	currentBlink.interval = currentBlink.startFrame;//初始化第一项的interval，为开始帧的序号
+				//}
+				//if (recentBlink.size() >= 10)//如果队列内元素数量大于10，从眨眼时间总和中减去该项并弹出
+				//{
+				//	currentBlink.blinkTimeSum -= (recentBlink.front().endFrame - recentBlink.front().startFrame + 1);					
+				//	recentBlink.pop();
+				//}
 				recentBlink.push(currentBlink);
 			}
+			//重置
 			cont_frames = 0;
 			currentBlink.startFrame = -1;
 			currentBlink.blinkTimeSum = 0;
@@ -314,13 +325,20 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 	}
 	if (!recentBlink.empty() && frameNumber % 30 == 0) {
 		//要求队列非空且每30帧刷新一次数据
-		//计算眨眼频率，队列中眨眼次数 / 队列尾-队列头+队头的interval，再把帧数换算成时间1800帧=1min
-		blinkFrequency = (float)(recentBlink.size()) * 1800 / (frameNumber - recentBlink.front().startFrame + 1 + recentBlink.front().interval);
-		//计算眨眼间隔，队列尾-队列头+队头的interval-眨眼消耗的时间 / 队列中眨眼次数
-		blinkInterval = (float)(frameNumber - recentBlink.front().startFrame + 1 + recentBlink.front().interval - recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
-		//计算眨眼持续时间，眨眼消耗的时间 / 队列中眨眼次数
+		//计算眨眼频率，队列中眨眼次数 / 总时间，再把帧数换算成时间1800帧=1min，单位：次/min
+		blinkFrequency = (float)(recentBlink.size()) * 1800 / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber);
+		//计算眨眼间隔，总时间-眨眼消耗的时间 / 队列中眨眼次数，单位：s/次
+		blinkInterval = (float)(TIMESLICE - recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
+		//计算眨眼持续时间，眨眼消耗的时间 / 队列中眨眼次数，单位：s/次
 		blinkLastTime = (float)(recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
-		//cout << blinkLastTime << " " << recentBlink.back().blinkTimeSum <<" "<< recentBlink.size()<< endl;
+		//计算perclos，闭眼总时间/总时间*100%
+		perclos = (float)(recentBlink.back().blinkTimeSum) / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber) * 100;
+	}
+	else if (recentBlink.empty()) {
+		blinkFrequency = 0;
+		blinkInterval = 0;
+		blinkLastTime = 0;
+		perclos = 0;
 	}
 	return detection_success;
 }
@@ -379,6 +397,10 @@ void ATC::ATC_Thread() {
 				string lastStr("LAST:");
 				lastStr += text;
 				lastStr += "s/ts";
+				sprintf(text, "%.2f", fhInstance->perclos);
+				string percStr("PERCLOS:");
+				percStr += text;
+				percStr += "%";
 
 				sprintf(text, "%.4f", fhInstance->eye_diameter);
 				string diaStr("EyeDia:");
@@ -398,8 +420,9 @@ void ATC::ATC_Thread() {
 				cv::putText(colorImg, freStr, cv::Point(20, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, interStr, cv::Point(350, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, lastStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, diaStr, cv::Point(350, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, ratStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, percStr, cv::Point(350, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, diaStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, ratStr, cv::Point(350, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				
 				//绘制眼部特征点
 				if (detection_success) {
@@ -532,12 +555,12 @@ bool ATC::OpenFaceInit(const std::string & exePath) {
 	face_model=new LandmarkDetector::CLNF(reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location);
 	if (!reinterpret_cast<LandmarkDetector::CLNF*>(face_model)->loaded_successfully)
 	{
-		cout << "ERROR: Could not load the landmark detector" << endl;
+		std::cout << "ERROR: Could not load the landmark detector" << endl;
 		return false;
 	}
 	if (!reinterpret_cast<LandmarkDetector::CLNF*>(face_model)->eye_model)
 	{
-		cout << "WARNING: no eye model found" << endl;
+		std::cout << "WARNING: no eye model found" << endl;
 		return false;
 	}
 	return true;
