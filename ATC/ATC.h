@@ -70,8 +70,11 @@ class FeatureHouse
 	friend class ATC;
 protected:
 	static FeatureHouse* instance;
+	double confidence;
 	//x,y,z,euler_x,euler_y,euler_z
 	float headpose3D[6];
+	//headpose
+	cv::Vec6d pose_estimate;
 	//x_left,y_left ,z_left ; x_right,y_right,z_right
 	float pupilCenter3D[6];
 	//x1,y1,x2,y2.....x68,y68
@@ -92,17 +95,34 @@ protected:
 	//瞳孔和虹膜的比值
 	float eye_ratio;
 
+	//SVM分类器
+	cv::Ptr<cv::ml::SVM> svm1;
+
+	//Random Forest
+	cv::Ptr<cv::ml::RTrees> rtree;
+
 	//csv writer
 	std::ofstream outFile;
 	//frame number
 	unsigned int frameNumber;
+	//检测成功的帧数
+	unsigned int effFrameNumber;
 	//ear: the ratio of the eyes' width and height
-	float ear;
+	float ear = 0;
+	//ear阈值
+	float threshold;
 	//blink times
 	unsigned int blink_count;
 	//number of continuous frames in which ear is less than the THRESH
 	unsigned int cont_frames;
-
+	//number of continuous frames in which both of the predictions are 0
+	unsigned int cont_frames_mod;
+	//ear的最大值和最小值，初始化
+	float maxEAR = -1;
+	float minEAR = 10;
+	float tempMaxEAR = -1;
+	float tempMinEAR = 10;
+	
 	//used to record the recent blink
 	typedef struct blink {
 		int startFrame = -1;//眨眼开始帧号
@@ -118,6 +138,13 @@ protected:
 	float blinkLastTime = 0;
 	//perclos：闭眼的帧数/总帧数
 	float perclos = 0;
+	
+	//两种方法的开始帧号
+	int startFrame_mod = -1;
+	int startFrame_ear = -1;
+
+	//标志位
+	bool isBlinking = false;
 
 	FeatureHouse();
 	//calculate the distance of two landmarks in 2D
@@ -130,6 +157,8 @@ protected:
 	float GetEyeDistance(int i, int j);
 	//calculate the distance of two eyelandmarks in 3D
 	float GetEyeDistance3D(int i, int j);
+	//以矩形中心为中心放大size大小
+	cv::Rect RectCenterScale(cv::Rect rect, cv::Size size);
 
 	//eye blink count
 	//unsigned int blink;
@@ -191,7 +220,7 @@ public:
 		return instance;
 	}
 	void SwitchOpenFace(bool useOpenFace);
-
+	
 	//Start a thread using webcam(id=index)
 	cv::Size StartThread(int index);
 	//Start a thread using webcam(id=index), meanwhile save the video to the disk(path=fileName)
