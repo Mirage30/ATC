@@ -1,16 +1,21 @@
-#define _SCL_SECURE_NO_WARNINGS
+ï»¿#define _SCL_SECURE_NO_WARNINGS
 #include "ATC.h"
 #include <chrono>
 #include "LandmarkCoreIncludes.h"
+#include <Visualizer.h>
+#include <VisualizationUtils.h>
+#include <RotationHelpers.h>
 #include "GazeEstimation.h"
 #include <iostream>
 #include <fstream>
-ImgData* ImgData::instance=nullptr;
-ImgData* ATC::imgDataInstance=nullptr;
+ImgData* ImgData::instance = nullptr;
+ImgData* ATC::imgDataInstance = nullptr;
 //PeopleFeature* PeopleFeature::instance = nullptr;
-FeatureHouse* FeatureHouse::instance=nullptr;
+FeatureHouse* FeatureHouse::instance = nullptr;
 ATC* ATC::instance = nullptr;
-FeatureHouse* ATC::fhInstance=nullptr;
+FeatureHouse* ATC::fhInstance = nullptr;
+using std::cout;
+using std::endl;
 
 #pragma region ImgDataDefine
 inline bool ImgData::GetColorImg(cv::Mat &c) {
@@ -61,7 +66,7 @@ bool ImgData::Open(int index, const std::string & fileName) {
 	Open(index);
 	outputFileName = fileName;
 	try {
-		isValid=colorWriter.open(fileName, CV_FOURCC('M', 'P', '4', '2'), fps, cv::Size(width, height));
+		isValid = colorWriter.open(fileName, CV_FOURCC('M', 'P', '4', '2'), fps, cv::Size(width, height));
 	}
 	catch (...) {
 		isValid = false;
@@ -87,26 +92,81 @@ bool ImgData::Open(const std::string & fileName) {
 
 #pragma region FeatureHouse
 
-#define EAR_THRESH 0.28
-#define EYE_FRAME_MIN 3
+//#define EAR_THRESH 0.28
+#define EYE_FRAME_MIN 2
 #define EYE_FRAME_MAX 8
+//timesliceæ—¶é—´ç‰‡ å¸§æ•° ä¸€ç§’30å¸§
+#define TIMESLICE 900
 float FeatureHouse::GetDistance(int i, int j)
 {
-	return sqrt(pow(landmark2D[2 * (i - 1)] - landmark2D[2 * (j - 1)], 2) + pow(landmark2D[2 * (i - 1) + 1] - landmark2D[2 * (j - 1) + 1], 2));
+	return sqrt(pow(landmark2D[2 * i] - landmark2D[2 * j], 2) + pow(landmark2D[2 * i + 1] - landmark2D[2 * j + 1], 2));
 }
 
-float FeatureHouse::EyeAspectRatio(float a, float b, float c) 
+float FeatureHouse::GetDistance3D(int i, int j)
+{
+	return sqrt(pow(landmark3D[3 * i] - landmark3D[3 * j], 2) + pow(landmark3D[3 * i + 1] - landmark3D[3 * j + 1], 2) + pow(landmark3D[3 * i + 2] - landmark3D[3 * j + 2], 2));
+}
+
+float FeatureHouse::EyeAspectRatio(float a, float b, float c)
 {
 	return (a + b) / (2 * c);
 }
 
+float FeatureHouse::GetEyeDistance(int i, int j)
+{
+	return sqrt(pow(eye_Landmark2D[2 * i] - eye_Landmark2D[2 * j], 2) + pow(eye_Landmark2D[2 * i + 1] - eye_Landmark2D[2 * j + 1], 2));
+}
+
+float FeatureHouse::GetEyeDistance3D(int i, int j)
+{
+	return sqrt(pow(eye_Landmark3D[3 * i] - eye_Landmark3D[3 * j], 2) + pow(eye_Landmark3D[3 * i + 1] - eye_Landmark3D[3 * j + 1], 2) + pow(eye_Landmark3D[3 * i + 2] - eye_Landmark3D[3 * j + 2], 2));
+}
+
+cv::Rect FeatureHouse::RectCenterScale(cv::Rect rect, cv::Size size) {
+	rect = rect + size;
+	cv::Point pt;
+	pt.x = cvRound(size.width / 2.0);
+	pt.y = cvRound(size.height / 2.0);
+	return (rect - pt);
+}
+
+float FeatureHouse::GazeCosinDiff(float * gazeLastvector, float * gazeVector)
+{
+	float a, b, c, d;
+	float gazeaverageLastvector[3];
+	float averageGaze[3];
+
+	gazeaverageLastvector[0] = gazeLastvector[0];
+	gazeaverageLastvector[1] = gazeLastvector[1];
+	gazeaverageLastvector[2] = gazeLastvector[2];
+
+
+	averageGaze[0] = gazeVector[0];
+	averageGaze[1] = gazeVector[1];
+	averageGaze[2] = gazeVector[2];
+
+	a = sqrt(pow(gazeaverageLastvector[0], 2) + pow(gazeaverageLastvector[1], 2) + pow(gazeaverageLastvector[2], 2));
+	b = sqrt(pow(averageGaze[0], 2) + pow(averageGaze[1], 2) + pow(averageGaze[2], 2));
+	c = gazeaverageLastvector[0] * averageGaze[0] + gazeaverageLastvector[1] * averageGaze[1] + gazeaverageLastvector[2] * averageGaze[2];
+	d = acos(c / (a*b));
+	return d;
+}
+
 FeatureHouse::FeatureHouse() {
 	frameNumber = 0;
+	effFrameNumber = 0;
 	cont_frames = 0;
+	cont_frames_mod = 0;
 	blink_count = 0;
+	threshold = -1;
+
+	//svm1 = cv::ml::StatModel::load<cv::ml::SVM>("Eyeoc_svm.xml");
+	//rtree = cv::ml::StatModel::load<cv::ml::RTrees>("Eyeoc_rtree.xml");
 
 	outFile.open("test.csv", ios::out);
-	outFile << "ear" << ',' << "blink" << ',' << "left_eye" << ',' << "right_eye" << ',';
+	outFile << "eye_diameter" << ',' << "eye_ratio" << ',';
+	outFile << "ear" << ',' << "blink" << ',' << "threshold" << ',' << "maxEar" << ',' << "minEar" << ',';
+	//outFile << "res_left" << ',' << "res_right" << ',';
 	outFile << "gaze_0_x" << ',' << "gaze_0_y" << ',' << "gaze_0_z" << ',' << "gaze_1_x" << ',' << "gaze_1_y" << ',' << "gaze_1_z" << ',' << " gaze_angle_x" << ',' << " gaze_angle_y" << ',';
 	for (int i = 0; i < 56; i++) {
 		outFile << " eye_lmk_x_" << i << ',' << "eye_lmk_y_" << i << ',';
@@ -124,7 +184,7 @@ FeatureHouse::FeatureHouse() {
 	outFile << endl;
 }
 
-bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy) {
+bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy) {
 	static cv::Point3f gazeDirection0(0, 0, -1);
 	static cv::Point3f gazeDirection1(0, 0, -1);
 	cv::Vec2f gaze_angle(0, 0);
@@ -132,12 +192,13 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 	static std::vector<cv::Point3f> eyeLandmark3D;
 	auto tempFaceModel = reinterpret_cast<LandmarkDetector::CLNF*>(face_model);
 	auto tempParameter = reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters);
+	confidence = tempFaceModel->detection_certainty;
 	//openface calculate
 	bool detection_success = LandmarkDetector::DetectLandmarksInVideo(colorImg, *tempFaceModel, *tempParameter, greyImg);
-	ear = 0;
 	frameNumber++;
 	if (detection_success)
 	{
+		effFrameNumber++;
 		if (tempFaceModel->eye_model)
 		{
 			GazeAnalysis::EstimateGaze(*tempFaceModel, gazeDirection0, fx, fy, cx, cy, true);
@@ -159,73 +220,10 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 			}
 		}
 		// Work out the pose of the head from the tracked model
-		cv::Vec6d pose_estimate = LandmarkDetector::GetPose(*tempFaceModel, fx, fy, cx, cy);
+		pose_estimate = LandmarkDetector::GetPose(*tempFaceModel, fx, fy, cx, cy);
 
 		//data copy zone ,use fhInstance->output mutex
 		std::lock_guard<std::mutex> lm(output);
-
-		//landmark2D
-		float tempLandmark[136];
-		std::copy(reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.datastart)
-			, reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.dataend)
-			, tempLandmark);
-		//½«landmarkË³Ğò½øĞĞµ÷Õû£¬µ÷Õû³Éx1 y1 x2 y2...x68 y68
-		for (int i = 0; i < 68; i++) {
-			landmark2D[2 * i] = tempLandmark[i];
-			landmark2D[2 * i + 1] = tempLandmark[i + 68];
-		}
-
-		//landmark3D
-		cv::Mat1f tempMat = tempFaceModel->GetShape(fx, fy, cx, cy);
-		float tempLandmark3D[204];
-		std::copy(reinterpret_cast<const float*>(tempMat.datastart)
-			, reinterpret_cast<const float*>(tempMat.dataend)
-			, tempLandmark3D);
-		for (int i = 0; i < 68; i++) {
-			landmark3D[3 * i] = tempLandmark3D[i];
-			landmark3D[3 * i + 1] = tempLandmark3D[i + 68];
-			landmark3D[3 * i + 2] = tempLandmark3D[i + 136];
-		}
-
-		//×óÓÒÑÛ·Ö±ğ¼ÆËãEAR£¬ÔÙÇóÆ½¾ùÖµ
-		float left_eye, right_eye;
-		left_eye = EyeAspectRatio(GetDistance(38, 42), GetDistance(39, 41), GetDistance(37, 40));
-		right_eye = EyeAspectRatio(GetDistance(44, 48), GetDistance(45, 47), GetDistance(43, 46));
-		ear = (left_eye + right_eye) / 2;
-		//cout << ear << endl;
-
-		//Èç¹ûEARµÍÓÚEAR_THRESHµÄ´ÎÊıÔÚÄ³¸öÇø¼äÄÚ£¬¾Í¼ÇÎª1´ÎÕ£ÑÛ
-		//Í¬Ê±¼ÇÂ¼×î½ü10´ÎÕ£ÑÛµÄ¿ªÊ¼Ö¡Êı¡¢½áÊøÖ¡Êı£¬²¢¼ÆËã³öÕ£ÑÛÊ±¼ä×ÜºÍ£¨·½±ã¼ÆËã£©ºÍÓëÉÏ´ÎÕ£ÑÛµÄ¼ä¸ôÊ±¼ä
-		if (ear <= EAR_THRESH) {
-			cont_frames++;
-			if (currentBlink.startFrame == -1) {
-				currentBlink.startFrame = frameNumber;
-			}
-		}
-		else {
-			if (cont_frames >= EYE_FRAME_MIN && cont_frames < EYE_FRAME_MAX) {
-				blink_count++;
-				currentBlink.endFrame = frameNumber;
-				currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
-				if (!recentBlink.empty()) {
-					currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
-					currentBlink.interval = currentBlink.startFrame - recentBlink.back().endFrame - 1;
-				}
-				else
-				{
-					currentBlink.interval = currentBlink.startFrame;//³õÊ¼»¯µÚÒ»ÏîµÄinterval£¬Îª¿ªÊ¼Ö¡µÄĞòºÅ
-				}
-				if (recentBlink.size() >= 10)//Èç¹û¶ÓÁĞÄÚÔªËØÊıÁ¿´óÓÚ10£¬´ÓÕ£ÑÛÊ±¼ä×ÜºÍÖĞ¼õÈ¥¸ÃÏî²¢µ¯³ö
-				{
-					currentBlink.blinkTimeSum -= (recentBlink.front().endFrame - recentBlink.front().startFrame + 1);					
-					recentBlink.pop();
-				}
-				recentBlink.push(currentBlink);
-			}
-			cont_frames = 0;
-			currentBlink.startFrame = -1;
-			currentBlink.blinkTimeSum = 0;
-		}
 
 		for (int i = 0; i < pose_estimate.channels; ++i) {
 			headpose3D[i] = pose_estimate[i];
@@ -253,8 +251,329 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		gazeVector[4] = gazeDirection1.y;
 		gazeVector[5] = gazeDirection1.z;
 
-		//½«Êı¾İĞ´ÈëcsvÎÄ¼ş£¬×÷Îª¼ÇÂ¼
-		outFile << ear << ',' << blink_count << ',' << left_eye << ',' << right_eye << ',';
+		//landmark2D
+		float tempLandmark[136];
+		std::copy(reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.datastart)
+			, reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.dataend)
+			, tempLandmark);
+		//å°†landmarké¡ºåºè¿›è¡Œè°ƒæ•´ï¼Œè°ƒæ•´æˆx1 y1 x2 y2...x68 y68
+		for (int i = 0; i < 68; i++) {
+			landmark2D[2 * i] = tempLandmark[i];
+			landmark2D[2 * i + 1] = tempLandmark[i + 68];
+		}
+
+		//landmark3D
+		cv::Mat1f tempMat = tempFaceModel->GetShape(fx, fy, cx, cy);
+		float tempLandmark3D[204];
+		std::copy(reinterpret_cast<const float*>(tempMat.datastart)
+			, reinterpret_cast<const float*>(tempMat.dataend)
+			, tempLandmark3D);
+		for (int i = 0; i < 68; i++) {
+			landmark3D[3 * i] = tempLandmark3D[i];
+			landmark3D[3 * i + 1] = tempLandmark3D[i + 68];
+			landmark3D[3 * i + 2] = tempLandmark3D[i + 136];
+		}
+#pragma region gazepoint block
+		cout << saccade_angle_sum << endl;
+		if (abs(gaze_angle_x-gaze_last_angle_x) < 0.01|| abs(gaze_angle_y - gaze_last_angle_y) < 0.01)
+		{
+			gaze_frames++;
+			saccade_angle_sum = 0;
+		}
+		else
+		{
+			saccade_angle_sum += GazeCosinDiff(gazeLastvector, gazeVector);
+			if (gaze_frames > 4)
+			{
+				gaze_count++;
+			}
+			gaze_frames = 0;
+			//gaze_frame_sum += gaze_frames;
+		}
+		//cout << (abs(gazeaverageLastvector[0] - averageGaze[0]) < 0.05) << endl;
+		//cout << "gazeframe" << " " << gaze_frames << endl;
+		gaze_last_angle_x = gaze_angle_x;
+		gaze_last_angle_y = gaze_angle_y;
+		gaze_time = gaze_frames / 25;
+		for (int i = 0; i < 5; i++)
+		{
+			gazeLastvector[i] = gazeVector[i];
+		}
+		//cout << "gaze_time" << " " << gaze_time << endl;
+
+#pragma endregion
+
+		//æ±‚ç³å­”å˜åŒ–
+		float left_eye_small_diameter = (GetEyeDistance3D(20, 24) + GetEyeDistance3D(21, 25) + GetEyeDistance3D(22, 26) + GetEyeDistance3D(23, 27)) / 4;
+		float right_eye_small_diameter = (GetEyeDistance3D(48, 52) + GetEyeDistance3D(49, 53) + GetEyeDistance3D(50, 54) + GetEyeDistance3D(51, 55)) / 4;
+		float left_eye_big_diameter = (GetEyeDistance3D(0, 4) + GetEyeDistance3D(1, 5) + GetEyeDistance3D(2, 6) + GetEyeDistance3D(3, 7)) / 4;
+		float right_eye_big_diameter = (GetEyeDistance3D(28, 32) + GetEyeDistance3D(29, 33) + GetEyeDistance3D(30, 34) + GetEyeDistance3D(31, 35)) / 4;
+		float left_ratio = left_eye_small_diameter / left_eye_big_diameter;
+		float right_ratio = right_eye_small_diameter / right_eye_big_diameter;
+		//ç³å­”ç›´å¾„
+		eye_diameter = (left_eye_small_diameter + right_eye_small_diameter) / 2;
+		float eye_diameter_big = (left_eye_big_diameter + right_eye_big_diameter) / 2;
+		eye_ratio = (left_ratio + right_ratio) / 2;
+		//cout << left_eye_big_diameter << " " << left_eye_small_diameter << " " << right_eye_big_diameter << " " << right_eye_small_diameter << endl;
+		//cout << eye_diameter << " " << eye_diameter_big << " " << left_ratio << " " << right_ratio << endl;
+
+
+//#pragma region SVM
+//		//ç”¨æ¥ä¿å­˜çœ¼éƒ¨ç‰¹å¾ç‚¹
+//		std::vector<cv::Point> leftEyeLmk;
+//		std::vector<cv::Point> rightEyeLmk;
+//
+//		//ç‰¹å¾ç‚¹ä¿å­˜
+//		for (int i = 36; i <= 41; i++) {
+//			cv::Point p(landmark2D[2 * i], landmark2D[2 * i + 1]);
+//			leftEyeLmk.push_back(p);
+//		}
+//		for (int i = 42; i <= 47; i++) {
+//			cv::Point p(landmark2D[2 * i], landmark2D[2 * i + 1]);
+//			rightEyeLmk.push_back(p);
+//		}
+//
+//		//çœ¼éƒ¨çŸ©å½¢ç¡®å®š
+//		cv::Rect temp_left = cv::boundingRect(leftEyeLmk);
+//		cv::Rect rect_left = RectCenterScale(temp_left, cv::Size(temp_left.height, temp_left.width));
+//		cv::Rect temp_right = cv::boundingRect(rightEyeLmk);
+//		cv::Rect rect_right = RectCenterScale(temp_right, cv::Size(temp_right.height, temp_right.width));
+//
+//		//ä½¿ç”¨æ¨¡å‹
+//		//å·¦çœ¼
+//		cv::Mat eye_rect_left = colorImg(rect_left);
+//		cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
+//		cv::Mat eye_gray_left;
+//		cv::cvtColor(eye_rect_left, eye_gray_left, CV_BGR2GRAY);
+//
+//		//cv::imshow("left_eye", eye_gray_left);
+//		eye_gray_left.convertTo(eye_gray_left, CV_32F, 1.0 / 255.0);
+//		cv::Mat input_eye_left(cv::Size(24 * 24, 1), CV_32F);
+//		for (int i = 0; i < 24; ++i)
+//			for (int j = 0; j < 24; ++j)
+//				input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
+//
+//		/*float res_left = rtree->predict(input_eye_left);
+//		cv::Mat tttt;
+//		rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/
+//
+//		float res_left = svm1->predict(input_eye_left);
+//
+//		//å³çœ¼
+//		cv::Mat eye_rect_right = colorImg(rect_right);
+//		cv::resize(eye_rect_right, eye_rect_right, cv::Size(24, 24));
+//		cv::Mat eye_gray_right;
+//		cv::cvtColor(eye_rect_right, eye_gray_right, CV_BGR2GRAY);
+//
+//		//cv::imshow("right_eye", eye_gray_right);
+//		eye_gray_right.convertTo(eye_gray_right, CV_32F, 1.0 / 255.0);
+//		cv::Mat input_eye_right(cv::Size(24 * 24, 1), CV_32F);
+//		for (int i = 0; i < 24; ++i)
+//			for (int j = 0; j < 24; ++j)
+//				input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
+//
+//		/*float res_right = rtree->predict(input_eye_right);
+//		cv::Mat tttt2;
+//		rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/
+//
+//		float res_right = svm1->predict(input_eye_right);
+//
+//		cout << res_left << " " << res_right << " ";
+//		for (int i = 1; i <= 6; i++) {
+//			cout << headpose3D[i] << " ";
+//		}
+//		cout << endl;
+//#pragma endregion
+
+
+#pragma region EAR
+		//å·¦å³çœ¼åˆ†åˆ«è®¡ç®—EARï¼Œå†æ±‚å¹³å‡å€¼
+		float former_ear = ear;
+		float left_eye, right_eye;
+		left_eye = EyeAspectRatio(GetDistance3D(37, 41), GetDistance3D(38, 40), GetDistance3D(36, 39));
+		right_eye = EyeAspectRatio(GetDistance3D(43, 47), GetDistance3D(44, 46), GetDistance3D(42, 45));
+		ear = (left_eye + right_eye) / 2;
+		//cout << left_eye << " " << right_eye << endl;
+		//cout << GetDistance3D(37, 41) << " " << GetDistance3D(38, 40) << " " << GetDistance3D(36, 39) << endl;
+
+		if (ear > maxEAR)
+			maxEAR = ear;
+		if (ear < minEAR)
+			minEAR = ear;
+		if (ear > tempMaxEAR)
+			tempMaxEAR = ear;
+		if (ear < tempMinEAR)
+			tempMinEAR = ear;
+
+		float former_thresh = threshold;
+		threshold = maxEAR - 0.02 >(maxEAR + minEAR) / 2 ? (maxEAR + minEAR) / 2 : maxEAR - 0.02;
+
+		//æ’é™¤ççœ¼å¹³å‡earä½äºé˜ˆå€¼è€Œè®¡æ•°çœ¨çœ¼æƒ…å†µ
+		//é˜ˆå€¼å˜åŒ–å¤§ï¼Œearå˜åŒ–å°ï¼ˆæ’é™¤çœ¨çœ¼ï¼‰ï¼Œå‰earä½äºé˜ˆå€¼ï¼Œç°earé«˜äºé˜ˆå€¼
+		if (former_thresh - threshold >= 0.01 && abs(ear - former_ear) < 0.01 && (former_ear - former_thresh) * (ear - threshold) < 0) {
+			cont_frames = 0;
+		}
+
+		//åˆ·æ–°é˜ˆå€¼
+		if (!(effFrameNumber % 10)) {
+			maxEAR = tempMaxEAR;
+			minEAR = tempMinEAR;
+			tempMaxEAR = -1;
+			tempMinEAR = 10;
+		}
+#pragma endregion
+
+		//ç»´æŠ¤é˜Ÿåˆ—ï¼Œå¦‚æœçœ¨çœ¼å·²ç»è¿‡æœŸï¼Œåˆ™å¼¹å‡ºé˜Ÿåˆ—
+		while (!recentBlink.empty() && ((int)frameNumber - TIMESLICE > recentBlink.front().startFrame)) {
+			recentBlink.back().blinkTimeSum -= (recentBlink.front().endFrame - recentBlink.front().startFrame + 1);
+			recentBlink.pop();
+		}
+
+#pragma region æƒé‡
+		////è®¡ç®—çœ¨çœ¼çš„æƒé‡ï¼Œåˆ†åˆ«ä¸ºæ¨¡å‹æ³•ã€earã€æ€»æƒé‡
+		//int wt_model = 0, wt_ear = 0, wt;
+
+		////è®¡ç®—æƒé‡
+		////æ ‡å¿—ä½
+		//bool sign_mod = false, sign_ear = false;
+		////SVMæ–¹æ³•
+		//if (!res_left && !res_right) {	//ä¸¤åªçœ¼ç›éƒ½é—­
+		//	if (startFrame_mod == -1) {
+		//		startFrame_mod = frameNumber;
+		//	}
+		//	cont_frames_mod++;
+		//	if (cont_frames_mod >= 2) {
+		//		wt_model = 10;
+		//	}
+		//	wt_model = wt_model > 8 ? wt_model : 8;
+		//}
+		//else if (!res_left || !res_right) {		//é—­ä¸€åªçœ¼ç›
+		//	if (startFrame_mod == -1) {
+		//		startFrame_mod = frameNumber;
+		//	}
+		//	wt_model = 3;
+		//}
+		//else
+		//{
+		//	if (cont_frames_mod >= 1 && cont_frames_mod < EYE_FRAME_MAX) {
+		//		wt_model = 5;
+		//	}
+		//	//é‡ç½®
+		//	//startFrame_mod = -1;
+		//	sign_mod = true;
+		//	cont_frames_mod = 0;
+		//}
+
+		////EARæ–¹æ³•
+		//if (threshold != -1) {
+		//	if (ear <= threshold) {
+		//		cont_frames++;
+		//		if (startFrame_ear == -1) {
+		//			startFrame_ear = frameNumber;
+		//		}
+		//		wt_ear = 5;
+		//	}
+		//	else {
+		//		if (cont_frames >= EYE_FRAME_MIN && cont_frames < EYE_FRAME_MAX) {
+		//			wt_ear = 10;
+		//		}
+		//		//é‡ç½®
+		//		//startFrame_ear = -1;
+		//		sign_ear = true;
+		//		cont_frames = 0;
+		//	}
+		//}
+
+		////æƒé‡æ±‚å’Œ
+		////æƒé‡é˜ˆå€¼ï¼Œä¸€èˆ¬æƒ…å†µä¸º10ï¼Œç‰¹æ®Šæƒ…å†µæ—¶ä¸º5ï¼ˆç”±æ¨¡å‹æ³•æ§åˆ¶çœ¨çœ¼ï¼‰ã€‚ç‰¹æ®Šæƒ…å†µåŒ…æ‹¬ï¼šEARåˆå§‹åŒ–é˜¶æ®µ
+		//int wt_thresh = (threshold == -1) ? 5 : 10;
+		//wt = wt_ear + wt_model;
+		//if (wt >= wt_thresh) {
+		//	if (isBlinking == false) {
+		//		if (currentBlink.startFrame == -1) {
+		//			currentBlink.startFrame = wt_model > wt_ear ? startFrame_mod : startFrame_ear;
+		//			cout << currentBlink.startFrame << " " << startFrame_mod << " " << startFrame_ear << " " << wt_model << " " << wt_ear << endl;
+		//		}
+		//	}
+		//	isBlinking = true;
+		//}
+		//else
+		//{
+		//	if (isBlinking == true) {
+		//		blink_count++;
+		//		currentBlink.endFrame = frameNumber;
+		//		currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
+		//		if (!recentBlink.empty()) {
+		//			currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
+		//		}
+		//		recentBlink.push(currentBlink);
+		//		//cout << currentBlink.startFrame << " " << currentBlink.endFrame << " " << ear<<" "<<res_left<<" " <<res_right  << endl;
+		//	}
+		//	//é‡ç½®
+		//	currentBlink.startFrame = -1;
+		//	currentBlink.blinkTimeSum = 0;
+		//	isBlinking = false;
+		//}
+
+		//startFrame_mod = (sign_mod) ? -1 : startFrame_mod;
+		//startFrame_ear = (sign_ear) ? -1 : startFrame_ear;
+
+#pragma endregion
+
+		//å¦‚æœEARä½äºthresholdçš„æ¬¡æ•°åœ¨æŸä¸ªåŒºé—´å†…ï¼Œå°±è®°ä¸º1æ¬¡çœ¨çœ¼
+		//åŒæ—¶è®°å½•æœ€è¿‘10æ¬¡çœ¨çœ¼çš„å¼€å§‹å¸§æ•°ã€ç»“æŸå¸§æ•°ï¼Œå¹¶è®¡ç®—å‡ºçœ¨çœ¼æ—¶é—´æ€»å’Œï¼ˆæ–¹ä¾¿è®¡ç®—ï¼‰å’Œä¸ä¸Šæ¬¡çœ¨çœ¼çš„é—´éš”æ—¶é—´
+		if (threshold != -1) {
+			if (ear <= threshold) {
+				cont_frames++;
+				if (currentBlink.startFrame == -1) {
+					currentBlink.startFrame = frameNumber;
+				}
+			}
+			else {
+				if (cont_frames >= EYE_FRAME_MIN && cont_frames < EYE_FRAME_MAX) {
+					blink_count++;
+					currentBlink.endFrame = frameNumber;
+					currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
+					if (!recentBlink.empty()) {
+						currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
+					}
+					recentBlink.push(currentBlink);
+				}
+				//é‡ç½®
+				cont_frames = 0;
+				currentBlink.startFrame = -1;
+				currentBlink.blinkTimeSum = 0;
+			}
+		}
+
+		//æ¨¡å‹æ³•æµ‹è¯•
+		//if (!res_left || !res_right) {
+		//	cont_frames++;
+		//	if (currentBlink.startFrame == -1) {
+		//		currentBlink.startFrame = frameNumber;
+		//	}
+		//}
+		//else {
+		//	if (cont_frames >= 1 && cont_frames < EYE_FRAME_MAX) {
+		//		blink_count++;
+		//		currentBlink.endFrame = frameNumber;
+		//		currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
+		//		if (!recentBlink.empty()) {
+		//			currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
+		//		}
+		//		recentBlink.push(currentBlink);
+		//	}
+		//	//é‡ç½®
+		//	cont_frames = 0;
+		//	currentBlink.startFrame = -1;
+		//	currentBlink.blinkTimeSum = 0;
+		//}
+
+
+		//å°†æ•°æ®å†™å…¥csvæ–‡ä»¶ï¼Œä½œä¸ºè®°å½•
+		outFile << eye_diameter << ',' << eye_ratio << ',';
+		outFile << ear << ',' << blink_count << ',' << threshold << ',' << maxEAR << ',' << minEAR << ',';
+		//outFile << res_left << ',' << res_right << ',';
 		for (int i = 0; i < 6; i++) {
 			outFile << gazeVector[i] << ',';
 		}
@@ -276,22 +595,34 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		}
 		outFile << endl;
 	}
+	else
+	{
+		//ä¾¿äºæ˜¾ç¤º
+		ear = 0;
+	}
 	if (!recentBlink.empty() && frameNumber % 30 == 0) {
-		//ÒªÇó¶ÓÁĞ·Ç¿ÕÇÒÃ¿30Ö¡Ë¢ĞÂÒ»´ÎÊı¾İ
-		//¼ÆËãÕ£ÑÛÆµÂÊ£¬¶ÓÁĞÖĞÕ£ÑÛ´ÎÊı / ¶ÓÁĞÎ²-¶ÓÁĞÍ·+¶ÓÍ·µÄinterval£¬ÔÙ°ÑÖ¡Êı»»Ëã³ÉÊ±¼ä1800Ö¡=1min
-		blinkFrequency = (float)(recentBlink.size()) * 1800 / (frameNumber - recentBlink.front().startFrame + 1 + recentBlink.front().interval);
-		//¼ÆËãÕ£ÑÛ¼ä¸ô£¬¶ÓÁĞÎ²-¶ÓÁĞÍ·+¶ÓÍ·µÄinterval-Õ£ÑÛÏûºÄµÄÊ±¼ä / ¶ÓÁĞÖĞÕ£ÑÛ´ÎÊı
-		blinkInterval = (float)(frameNumber - recentBlink.front().startFrame + 1 + recentBlink.front().interval - recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
-		//¼ÆËãÕ£ÑÛ³ÖĞøÊ±¼ä£¬Õ£ÑÛÏûºÄµÄÊ±¼ä / ¶ÓÁĞÖĞÕ£ÑÛ´ÎÊı
+		//è¦æ±‚é˜Ÿåˆ—éç©ºä¸”æ¯30å¸§åˆ·æ–°ä¸€æ¬¡æ•°æ®
+		//è®¡ç®—çœ¨çœ¼é¢‘ç‡ï¼Œé˜Ÿåˆ—ä¸­çœ¨çœ¼æ¬¡æ•° / æ€»æ—¶é—´ï¼Œå†æŠŠå¸§æ•°æ¢ç®—æˆæ—¶é—´1800å¸§=1minï¼Œå•ä½ï¼šæ¬¡/min
+		blinkFrequency = (float)(recentBlink.size()) * 1800 / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber);
+		//è®¡ç®—çœ¨çœ¼é—´éš”ï¼Œæ€»æ—¶é—´-çœ¨çœ¼æ¶ˆè€—çš„æ—¶é—´ / é˜Ÿåˆ—ä¸­çœ¨çœ¼æ¬¡æ•°ï¼Œå•ä½ï¼šs/æ¬¡
+		blinkInterval = (float)(TIMESLICE - recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
+		//è®¡ç®—çœ¨çœ¼æŒç»­æ—¶é—´ï¼Œçœ¨çœ¼æ¶ˆè€—çš„æ—¶é—´ / é˜Ÿåˆ—ä¸­çœ¨çœ¼æ¬¡æ•°ï¼Œå•ä½ï¼šs/æ¬¡
 		blinkLastTime = (float)(recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
-		//cout << blinkLastTime << " " << recentBlink.back().blinkTimeSum <<" "<< recentBlink.size()<< endl;
+		//è®¡ç®—perclosï¼Œé—­çœ¼æ€»æ—¶é—´/æ€»æ—¶é—´*100%
+		perclos = (float)(recentBlink.back().blinkTimeSum) / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber) * 100;
+	}
+	else if (recentBlink.empty()) {
+		blinkFrequency = 0;
+		blinkInterval = 0;
+		blinkLastTime = 0;
+		perclos = 0;
 	}
 	return detection_success;
 }
 
 void FeatureHouse::GetLandmark2d(float landmark2d[68 * 2]) {
 	std::lock_guard<std::mutex> lm(output);
-	std::copy(landmark2D,landmark2D + 68 * 2, landmark2d);
+	std::copy(landmark2D, landmark2D + 68 * 2, landmark2d);
 }
 
 void FeatureHouse::GetPupilCenter3d(float pupilCenter3d[6]) {
@@ -314,16 +645,116 @@ void FeatureHouse::GetHeadPose(float headpose[6]) {
 void ATC::ATC_Thread() {
 	std::cout << "threadStart" << std::endl;
 	cv::VideoWriter writer("test.avi", CV_FOURCC('M', 'P', '4', '2'), 30, cv::Size(imgDataInstance->width, imgDataInstance->height));
+	Utilities::FpsTracker fps_tracker;
+	
+	/*int open = 0, close = 0;
+	string filePath;*/
+
+	Utilities::Visualizer visualizer(true, false, false, false);
 	while (threadContinue) {
 		//std::cout << "threadContinue "<< std::endl;
-		cv::Mat greyImg,colorImg;
+		cv::Mat greyImg, colorImg;
 		if (imgDataInstance->SetImg()) {
 			imgDataInstance->GetGreyImg(greyImg);
 			if (useOpenFace) {
 				GetColorImg(colorImg);
 				detection_success = fhInstance->SetFeature(face_model, parameters, greyImg, colorImg, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
-				
-				//Ìí¼ÓÎÄ×Ö
+
+				//ç»˜åˆ¶çœ¼éƒ¨ç‰¹å¾ç‚¹
+				if (detection_success) {
+					//ä¿å­˜å­¦ä¹ æ‰€ç”¨æ•°æ®
+					//cv::imshow("eye", eye_gray);
+					//if (fhInstance->ear < fhInstance->threshold) {
+					//	close++;
+					//	filePath = "./data/close/img_" + to_string(close) + ".jpg";
+					//}
+					//else {
+					//	open++;
+					//	filePath = "./data/open/img_" + to_string(open) + ".jpg";
+					//}
+					//cv::imwrite(filePath, eye_gray);
+
+					//ç»˜åˆ¶çœ¼éƒ¨çŸ©å½¢
+					//cv::rectangle(colorImg, rect, CV_RGB(0, 255, 0));
+					//cv::rectangle(colorImg, cv::boundingRect(rightEyeLmk), CV_RGB(0, 255, 0));
+
+					//ç»˜åˆ¶å…¨éƒ¨ç‰¹å¾ç‚¹
+					for (int i = 0; i < 68; i++) {
+						cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					}
+					fps_tracker.AddFrame();
+					//cout<<fps_tracker.GetFPS()<<endl;
+
+#pragma region paint
+					////å¤´éƒ¨å§¿æ€ç›’å­
+					Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+
+					//ç»˜åˆ¶è§†çº¿	
+					float draw_multiplier = 16;
+					int draw_shiftbits = 4;
+					//ç»˜åˆ¶ç³å­”çš„è½®å»“
+					for (int i = 0; i <= 35; i++) {
+						if (i == 7) {
+							cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+							cv::Point p2(fhInstance->eye_Landmark2D[2 * 0], fhInstance->eye_Landmark2D[2 * 0 + 1]);
+							cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
+							i = 27;
+							continue;
+						}
+						else if (i == 35) {
+							cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+							cv::Point p2(fhInstance->eye_Landmark2D[2 * 28], fhInstance->eye_Landmark2D[2 * 28 + 1]);
+							cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
+							break;
+						}
+						cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+						cv::Point p2(fhInstance->eye_Landmark2D[2 * (i + 1)], fhInstance->eye_Landmark2D[2 * (i + 1) + 1]);
+						cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
+					}
+
+					// Now draw the gaze lines themselves
+					cv::Mat cameraMat = (cv::Mat_<float>(3, 3) << imgDataInstance->fx, 0, imgDataInstance->cx, 0, imgDataInstance->fy, imgDataInstance->cy, 0, 0, 0);
+					
+					// Grabbing the pupil location, to draw eye gaze need to know where the pupil is
+					cv::Point3f pupil_left(fhInstance->pupilCenter3D[0], fhInstance->pupilCenter3D[1], fhInstance->pupilCenter3D[2]);
+					cv::Point3f pupil_right(fhInstance->pupilCenter3D[3], fhInstance->pupilCenter3D[4], fhInstance->pupilCenter3D[5]);
+
+					cv::Point3f gaze_direction0(fhInstance->gazeVector[0], fhInstance->gazeVector[1], fhInstance->gazeVector[2]);
+					cv::Point3f gaze_direction1(fhInstance->gazeVector[3], fhInstance->gazeVector[4], fhInstance->gazeVector[5]);
+
+					std::vector<cv::Point3f> points_left;
+					points_left.push_back(cv::Point3f(pupil_left));
+					points_left.push_back(cv::Point3f(pupil_left) + cv::Point3f(gaze_direction0)*50.0);
+
+					std::vector<cv::Point3f> points_right;
+					points_right.push_back(cv::Point3f(pupil_right));
+					points_right.push_back(cv::Point3f(pupil_right) + cv::Point3f(gaze_direction1)*50.0);
+
+					cv::Mat_<float> proj_points;
+					cv::Mat_<float> mesh_0 = (cv::Mat_<float>(2, 3) << points_left[0].x, points_left[0].y, points_left[0].z, points_left[1].x, points_left[1].y, points_left[1].z);
+					Utilities::Project(proj_points, mesh_0, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+					cv::line(colorImg, cv::Point(cvRound(proj_points.at<float>(0, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(0, 1) * (float)draw_multiplier)),
+						cv::Point(cvRound(proj_points.at<float>(1, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(1, 1) * (float)draw_multiplier)), cv::Scalar(110, 220, 0), 2, CV_AA, draw_shiftbits);
+
+					cv::Mat_<float> mesh_1 = (cv::Mat_<float>(2, 3) << points_right[0].x, points_right[0].y, points_right[0].z, points_right[1].x, points_right[1].y, points_right[1].z);
+					Utilities::Project(proj_points, mesh_1, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+					cv::line(colorImg, cv::Point(cvRound(proj_points.at<float>(0, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(0, 1) * (float)draw_multiplier)),
+						cv::Point(cvRound(proj_points.at<float>(1, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(1, 1) * (float)draw_multiplier)), cv::Scalar(110, 220, 0), 2, CV_AA, draw_shiftbits);
+#pragma endregion
+
+					//ç³å­”ç‰¹å¾ç‚¹ç»˜åˆ¶
+					//for (int i = 48; i <= 55; i++) {
+					//cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					//cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					//}
+					//for (int i = 20; i <= 27; i++) {
+					//cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					//cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					//}
+				}
+
+				//æ·»åŠ æ–‡å­—
 				char text[255];
 				sprintf(text, "%.4f", fhInstance->ear);
 				string earStr("EAR:");
@@ -343,29 +774,45 @@ void ATC::ATC_Thread() {
 				string lastStr("LAST:");
 				lastStr += text;
 				lastStr += "s/ts";
+				sprintf(text, "%.2f", fhInstance->perclos);
+				string percStr("PERCLOS:");
+				percStr += text;
+				percStr += "%";
 
+				sprintf(text, "%.4f", fhInstance->eye_diameter);
+				string diaStr("EyeDia:");
+				diaStr += text;
+				sprintf(text, "%.4f", fhInstance->eye_ratio);
+				string ratStr("EyeRat:");
+				ratStr += text;
+
+				sprintf(text, "%u", fhInstance->gaze_count);
+				string gazecountStr("GAZECOUNT:");
+				gazecountStr += text;
+				sprintf(text, "%.2f", fhInstance->gaze_time);
+				string gazetimeStr("GAZETIME:");
+				gazetimeStr += text;
+				sprintf(text, "%.2f", fhInstance->saccade_angle_sum);
+				string saccadeanglesumStr("SACCADEAM:");
+				saccadeanglesumStr += text;
 				/*sprintf(text, "%.2f", fhInstance->gaze_angle_x);
 				string gazeXStr("GAZE_X:");
 				gazeXStr += text;
 				sprintf(text, "%.2f", fhInstance->gaze_angle_y);
 				string gazeYStr("GAZE_Y:");
 				gazeYStr += text;*/
+
 				cv::putText(colorImg, earStr, cv::Point(20, 40), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, blinkStr, cv::Point(350, 40), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, freStr, cv::Point(20, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, interStr, cv::Point(350, 90), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, lastStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				//cv::putText(colorImg, gazeXStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				//cv::putText(colorImg, gazeYStr, cv::Point(350, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
-				
-				//»æÖÆÑÛ²¿ÌØÕ÷µã
-				if (detection_success) {
-					for (int i = 36; i <= 47; i++) {
-						cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
-						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
-					}
-				}
-
+				cv::putText(colorImg, percStr, cv::Point(350, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, diaStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, ratStr, cv::Point(350, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, gazecountStr, cv::Point(20, 240), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, gazetimeStr, cv::Point(350, 240), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, saccadeanglesumStr, cv::Point(20, 290), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				writer << colorImg;
 				cv::imshow("test", colorImg);
 				cv::waitKey(5);
@@ -387,7 +834,7 @@ cv::Size ATC::StartThread(int index) {
 	threadContinue = true;
 	if (imgDataInstance->Open(index)) {
 		t = new std::thread(std::bind(&ATC::ATC_Thread, this));
-		std::cout << imgDataInstance->width << " " << imgDataInstance->height << std::endl;
+		std::cout << imgDataInstance->width << " " << imgDataInstance->height <<imgDataInstance->fps<<std::endl;
 		return cv::Size(imgDataInstance->width, imgDataInstance->height);
 	}
 	else {
@@ -397,7 +844,7 @@ cv::Size ATC::StartThread(int index) {
 
 cv::Size ATC::StartThread(int index, const std::string & fileName) {
 	threadContinue = true;
-	if(imgDataInstance->Open(index, fileName)) {
+	if (imgDataInstance->Open(index, fileName)) {
 		t = new std::thread(std::bind(&ATC::ATC_Thread, this));
 		std::cout << imgDataInstance->width << " " << imgDataInstance->height << std::endl;
 		return cv::Size(imgDataInstance->width, imgDataInstance->height);
@@ -436,7 +883,7 @@ void ATC::StopThread() {
 
 bool ATC::GetColorImg(cv::Mat & c)
 {
-	return threadContinue&&imgDataInstance->GetColorImg(c);
+	return threadContinue && imgDataInstance->GetColorImg(c);
 }
 
 bool ATC::GetLandmark2d(float landmark2d[68 * 2]) {
@@ -472,15 +919,15 @@ bool ATC::OpenFaceInit(const std::string & exePath) {
 	parameters = new LandmarkDetector::FaceModelParameters(arguments);
 	// The modules that are being used for tracking
 	std::cout << reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location << std::endl;
-	face_model=new LandmarkDetector::CLNF(reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location);
+	face_model = new LandmarkDetector::CLNF(reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location);
 	if (!reinterpret_cast<LandmarkDetector::CLNF*>(face_model)->loaded_successfully)
 	{
-		cout << "ERROR: Could not load the landmark detector" << endl;
+		std::cout << "ERROR: Could not load the landmark detector" << endl;
 		return false;
 	}
 	if (!reinterpret_cast<LandmarkDetector::CLNF*>(face_model)->eye_model)
 	{
-		cout << "WARNING: no eye model found" << endl;
+		std::cout << "WARNING: no eye model found" << endl;
 		return false;
 	}
 	return true;
@@ -497,15 +944,15 @@ ATC::~ATC() {
 
 ofstream outFile;
 
-int main(int argc, char **argv) 
+int main(int argc, char **argv)
 {
 	ATC* a = ATC::GetInstance(argv[0], true);
 	//a->StartThread("F:\\Project\\ATC\\ATC\\x64\\Release\\YDXJ0004_converter.wmv");
-	//a->StartThread("E:\\LYC\\ÎÄ¼ş\\´óÑ§\\Ñ§Ï°\\ÊµÑéÊÒ\\Â½·å\\ÈËÁ³Ê¶±ğ_¿Õ¹Ü\\07_12¿Õ¹ÜÊµÑéÊı¾İ²É¼¯\\¼ô¼­_lyc\\¹ÜÖÆ2ÉãÏñÍ·²É¼¯\\2_1.mp4");
-	//a->StartThread("F:\\FFOutput\\2_1.avi");
+	//a->StartThread("F:\\ç©ºç®¡äº¤äº’\\BY1706100.mp4");
+	//a->StartThread("2_1.mp4");
 	//a->StartThread(0, "test.avi");
 	a->StartThread(0);
-	
+
 	system("pause");
 	return 0;
 }
