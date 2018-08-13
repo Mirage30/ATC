@@ -73,6 +73,9 @@ protected:
 	double confidence;
 	//x,y,z,euler_x,euler_y,euler_z
 	float headpose3D[6];
+	float former_headpose3D[6];
+	//头部姿态初始化标志
+	bool init_head = false;
 	//headpose
 	cv::Vec6d pose_estimate;
 	//x_left,y_left ,z_left ; x_right,y_right,z_right
