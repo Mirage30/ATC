@@ -139,7 +139,7 @@ FeatureHouse::FeatureHouse() {
 	threshold = -1;
 
 	svm1 = cv::ml::StatModel::load<cv::ml::SVM>("Eyeoc_svm.xml");
-	rtree = cv::ml::StatModel::load<cv::ml::RTrees>("Eyeoc_rtree.xml");
+	//rtree = cv::ml::StatModel::load<cv::ml::RTrees>("Eyeoc_rtree.xml");
 
 	outFile.open("test.csv", ios::out);
 	outFile << "eye_diameter" << ',' << "eye_ratio" << ',';
@@ -202,7 +202,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 
 		//data copy zone ,use fhInstance->output mutex
 		std::lock_guard<std::mutex> lm(output);
-
+		
 		for (int i = 0; i < pose_estimate.channels; ++i) {
 			headpose3D[i] = pose_estimate[i];
 		}
@@ -327,13 +327,45 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 
 		float res_right = svm1->predict(input_eye_right);
 
-		cout << res_left << " " << res_right << " ";
-		for (int i = 1; i <= 6; i++) {
-			cout << headpose3D[i] << " ";
+		while (recentSVM.size() > TIMESLICE)
+		{
+			closeSum = recentSVM.front() ? closeSum - 1 : closeSum;
+			recentSVM.pop();
 		}
-		cout << endl;
+		if (!res_right && !res_left) {
+			recentSVM.push(true);
+			closeSum++;
+		}
+		else
+		{
+			recentSVM.push(false);
+		}
+
+		//cout << res_left << " " << res_right << " " << endl;
 #pragma endregion
-		
+
+		//头部转变角度和
+		float eu_sum = 0;
+		if (init_head) {
+			for (int i = 3; i <= 5; i++)
+				eu_sum += abs(former_headpose3D[i] - headpose3D[i]);
+
+			//如果头部转动过大则重置眨眼判定条件
+			if (eu_sum > 0.15) {
+				cont_frames = 0;
+				currentBlink.startFrame = -1;
+				currentBlink.blinkTimeSum = 0;
+			}
+
+			//cout << eu_sum << " ";
+			/*for (int i = 0; i < 6; i++) {
+				cout << headpose3D[i] << " ";
+			}
+			cout << endl;*/
+		}
+
+		std::copy(headpose3D, headpose3D + 6, former_headpose3D);
+		init_head = true;
 
 #pragma region EAR
 		//左右眼分别计算EAR，再求平均值
@@ -354,15 +386,6 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		if (ear < tempMinEAR)
 			tempMinEAR = ear;
 
-		float former_thresh = threshold;
-		threshold = maxEAR - 0.02 > (maxEAR + minEAR) / 2 ? (maxEAR + minEAR) / 2 : maxEAR - 0.02;
-		
-		//排除睁眼平均ear低于阈值而计数眨眼情况
-		//阈值变化大，ear变化小（排除眨眼），前ear低于阈值，现ear高于阈值
-		if (former_thresh - threshold >= 0.01 && abs(ear - former_ear) < 0.01 && (former_ear - former_thresh) * (ear - threshold) < 0) {
-			cont_frames = 0;
-		}
-
 		//刷新阈值
 		if (!(effFrameNumber % 10)) {
 			maxEAR = tempMaxEAR;
@@ -370,6 +393,18 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 			tempMaxEAR = -1;
 			tempMinEAR = 10;
 		}
+
+		float former_thresh = threshold;
+		threshold = maxEAR - 0.02 > (maxEAR + minEAR) / 2 ? (maxEAR + minEAR) / 2 : maxEAR - 0.02;
+		
+		//排除睁眼平均ear低于阈值而计数眨眼情况
+		//阈值变化大，ear变化小（排除眨眼），前ear低于阈值，现ear高于阈值
+		if (former_thresh - threshold >= 0.01 && abs(ear - former_ear) < 0.01 && (former_ear - former_thresh) * (ear - threshold) < 0) {
+			cont_frames = 0;
+			currentBlink.startFrame = -1;
+			currentBlink.blinkTimeSum = 0;
+		}
+
 #pragma endregion
 
 		//维护队列，如果眨眼已经过期，则弹出队列
@@ -471,28 +506,26 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 
 		//如果EAR低于threshold的次数在某个区间内，就记为1次眨眼
 		//同时记录最近10次眨眼的开始帧数、结束帧数，并计算出眨眼时间总和（方便计算）和与上次眨眼的间隔时间
-		if (threshold != -1) {
-			if (ear <= threshold) {
-				cont_frames++;
-				if (currentBlink.startFrame == -1) {
-					currentBlink.startFrame = frameNumber;
-				}
+		if (ear <= threshold) {
+			cont_frames++;
+			if (currentBlink.startFrame == -1) {
+				currentBlink.startFrame = frameNumber;
 			}
-			else {
-				if (cont_frames >= EYE_FRAME_MIN && cont_frames < EYE_FRAME_MAX) {
-					blink_count++;
-					currentBlink.endFrame = frameNumber;
-					currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
-					if (!recentBlink.empty()) {
-						currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
-					}
-					recentBlink.push(currentBlink);
+		}
+		else {
+			if (cont_frames >= EYE_FRAME_MIN && cont_frames < EYE_FRAME_MAX) {
+				blink_count++;
+				currentBlink.endFrame = frameNumber;
+				currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
+				if (!recentBlink.empty()) {
+					currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
 				}
-				//重置
-				cont_frames = 0;
-				currentBlink.startFrame = -1;
-				currentBlink.blinkTimeSum = 0;
+				recentBlink.push(currentBlink);
 			}
+			//重置
+			cont_frames = 0;
+			currentBlink.startFrame = -1;
+			currentBlink.blinkTimeSum = 0;
 		}
 
 		//模型法测试
@@ -559,6 +592,10 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		blinkLastTime = (float)(recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
 		//计算perclos，闭眼总时间/总时间*100%
 		perclos = (float)(recentBlink.back().blinkTimeSum) / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber) * 100;
+		
+		//计算perclos，通过SVM计算闭眼帧数/总帧数
+		float temp = (float)closeSum * 100 / recentSVM.size();
+		perclos = temp > perclos ? temp : perclos;
 	}
 	else if (recentBlink.empty()) {
 		blinkFrequency = 0;
@@ -634,7 +671,7 @@ void ATC::ATC_Thread() {
 
 
 #pragma region paint
-					////头部姿态盒子
+					//头部姿态盒子
 					//Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
 				
 					////绘制视线	
@@ -733,6 +770,11 @@ void ATC::ATC_Thread() {
 				string ratStr("EyeRat:");
 				ratStr += text;
 				
+				/*for (int i = 0; i < 6; i++) {
+					sprintf(text, "%.4f", fhInstance->headpose3D[]);
+
+				}*/
+
 				/*sprintf(text, "%.2f", fhInstance->gaze_angle_x);
 				string gazeXStr("GAZE_X:");
 				gazeXStr += text;
