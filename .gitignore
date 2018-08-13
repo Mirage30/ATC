@@ -267,3 +267,5 @@ __pycache__/
 /ATC.sln
 *.avi
 *.csv
+*.mp4
+*.xml
