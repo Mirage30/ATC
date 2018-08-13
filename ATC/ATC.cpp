@@ -649,6 +649,7 @@ void FeatureHouse::GetHeadPose(float headpose[6]) {
 void ATC::ATC_Thread() {
 	std::cout << "threadStart" << std::endl;
 	cv::VideoWriter writer("test.avi", CV_FOURCC('M', 'P', '4', '2'), 30, cv::Size(imgDataInstance->width, imgDataInstance->height));
+	//计算fps
 	Utilities::FpsTracker fps_tracker;
 	
 	/*int open = 0, close = 0;
@@ -687,8 +688,10 @@ void ATC::ATC_Thread() {
 						cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
 						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
 					}
+					//fps
 					fps_tracker.AddFrame();
-					//cout<<fps_tracker.GetFPS()<<endl;
+					//fps
+					cout<<fps_tracker.GetFPS()<<endl;
 
 #pragma region paint
 					////头部姿态盒子
