@@ -93,7 +93,7 @@ bool ImgData::Open(const std::string & fileName) {
 #pragma region FeatureHouse
 
 //#define EAR_THRESH 0.28
-#define EYE_FRAME_MIN 3
+#define EYE_FRAME_MIN 2
 #define EYE_FRAME_MAX 8
 //timeslice时间片 帧数 一秒30帧
 #define TIMESLICE 900
@@ -139,7 +139,7 @@ FeatureHouse::FeatureHouse() {
 	threshold = -1;
 
 	svm1 = cv::ml::StatModel::load<cv::ml::SVM>("Eyeoc_svm.xml");
-	rtree = cv::ml::StatModel::load<cv::ml::RTrees>("Eyeoc_rtree.xml");
+	//rtree = cv::ml::StatModel::load<cv::ml::RTrees>("Eyeoc_rtree.xml");
 
 	outFile.open("test.csv", ios::out);
 	outFile << "eye_diameter" << ',' << "eye_ratio" << ',';
@@ -268,66 +268,80 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		
 
 #pragma region SVM
-		////用来保存眼部特征点
-		//std::vector<cv::Point> leftEyeLmk;
-		//std::vector<cv::Point> rightEyeLmk;
+		//用来保存眼部特征点
+		std::vector<cv::Point> leftEyeLmk;
+		std::vector<cv::Point> rightEyeLmk;
 
-		////特征点保存
-		//for (int i = 36; i <= 41; i++) {
-		//	cv::Point p(landmark2D[2 * i], landmark2D[2 * i + 1]);
-		//	leftEyeLmk.push_back(p);
-		//}
-		//for (int i = 42; i <= 47; i++) {
-		//	cv::Point p(landmark2D[2 * i], landmark2D[2 * i + 1]);
-		//	rightEyeLmk.push_back(p);
-		//}
+		//特征点保存
+		for (int i = 36; i <= 41; i++) {
+			cv::Point p(landmark2D[2 * i], landmark2D[2 * i + 1]);
+			leftEyeLmk.push_back(p);
+		}
+		for (int i = 42; i <= 47; i++) {
+			cv::Point p(landmark2D[2 * i], landmark2D[2 * i + 1]);
+			rightEyeLmk.push_back(p);
+		}
 
-		////眼部矩形确定
-		//cv::Rect temp_left = cv::boundingRect(leftEyeLmk);
-		//cv::Rect rect_left = RectCenterScale(temp_left, cv::Size(temp_left.height, temp_left.width));
-		//cv::Rect temp_right = cv::boundingRect(rightEyeLmk);
-		//cv::Rect rect_right = RectCenterScale(temp_right, cv::Size(temp_right.height, temp_right.width));
+		//眼部矩形确定
+		cv::Rect temp_left = cv::boundingRect(leftEyeLmk);
+		cv::Rect rect_left = RectCenterScale(temp_left, cv::Size(temp_left.height, temp_left.width));
+		cv::Rect temp_right = cv::boundingRect(rightEyeLmk);
+		cv::Rect rect_right = RectCenterScale(temp_right, cv::Size(temp_right.height, temp_right.width));
 
-		////使用模型
-		////左眼
-		//cv::Mat eye_rect_left = colorImg(rect_left);
-		//cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
-		//cv::Mat eye_gray_left;
-		//cv::cvtColor(eye_rect_left, eye_gray_left, CV_BGR2GRAY);
-	 //   
-		////cv::imshow("left_eye", eye_gray_left);
-		//eye_gray_left.convertTo(eye_gray_left, CV_32F, 1.0 / 255.0);
-		//cv::Mat input_eye_left(cv::Size(24 * 24, 1), CV_32F);
-		//for (int i = 0; i < 24; ++i)
-		//	for (int j = 0; j < 24; ++j)
-		//		input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
+		//使用模型
+		//左眼
+		cv::Mat eye_rect_left = colorImg(rect_left);
+		cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
+		cv::Mat eye_gray_left;
+		cv::cvtColor(eye_rect_left, eye_gray_left, CV_BGR2GRAY);
+	    
+		//cv::imshow("left_eye", eye_gray_left);
+		eye_gray_left.convertTo(eye_gray_left, CV_32F, 1.0 / 255.0);
+		cv::Mat input_eye_left(cv::Size(24 * 24, 1), CV_32F);
+		for (int i = 0; i < 24; ++i)
+			for (int j = 0; j < 24; ++j)
+				input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
 
-		///*float res_left = rtree->predict(input_eye_left);
-		//cv::Mat tttt;
-		//rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/
+		/*float res_left = rtree->predict(input_eye_left);
+		cv::Mat tttt;
+		rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/
 
-		//float res_left = svm1->predict(input_eye_left);
+		float res_left = svm1->predict(input_eye_left);
 
-		////右眼
-		//cv::Mat eye_rect_right = colorImg(rect_right);
-		//cv::resize(eye_rect_right, eye_rect_right, cv::Size(24, 24));
-		//cv::Mat eye_gray_right;
-		//cv::cvtColor(eye_rect_right, eye_gray_right, CV_BGR2GRAY);
-		//
-		////cv::imshow("right_eye", eye_gray_right);
-		//eye_gray_right.convertTo(eye_gray_right, CV_32F, 1.0 / 255.0);
-		//cv::Mat input_eye_right(cv::Size(24 * 24, 1), CV_32F);
-		//for (int i = 0; i < 24; ++i)
-		//	for (int j = 0; j < 24; ++j)
-		//		input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
+		//右眼
+		cv::Mat eye_rect_right = colorImg(rect_right);
+		cv::resize(eye_rect_right, eye_rect_right, cv::Size(24, 24));
+		cv::Mat eye_gray_right;
+		cv::cvtColor(eye_rect_right, eye_gray_right, CV_BGR2GRAY);
+		
+		//cv::imshow("right_eye", eye_gray_right);
+		eye_gray_right.convertTo(eye_gray_right, CV_32F, 1.0 / 255.0);
+		cv::Mat input_eye_right(cv::Size(24 * 24, 1), CV_32F);
+		for (int i = 0; i < 24; ++i)
+			for (int j = 0; j < 24; ++j)
+				input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
 
-		///*float res_right = rtree->predict(input_eye_right);
-		//cv::Mat tttt2;
-		//rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/
+		/*float res_right = rtree->predict(input_eye_right);
+		cv::Mat tttt2;
+		rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/
 
-		//float res_right = svm1->predict(input_eye_right);
+		float res_right = svm1->predict(input_eye_right);
 
-		////cout << res_left << " " << res_right << " ";
+		while (recentSVM.size() > TIMESLICE)
+		{
+			closeSum = recentSVM.front() ? closeSum - 1 : closeSum;
+			recentSVM.pop();
+		}
+		if (!res_right && !res_left) {
+			recentSVM.push(true);
+			closeSum++;
+		}
+		else
+		{
+			recentSVM.push(false);
+		}
+
+		//cout << res_left << " " << res_right << " " << endl;
 #pragma endregion
 
 		//头部转变角度和
@@ -344,10 +358,10 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 			}
 
 			//cout << eu_sum << " ";
-			for (int i = 0; i < 6; i++) {
+			/*for (int i = 0; i < 6; i++) {
 				cout << headpose3D[i] << " ";
 			}
-			cout << endl;
+			cout << endl;*/
 		}
 
 		std::copy(headpose3D, headpose3D + 6, former_headpose3D);
@@ -372,6 +386,14 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		if (ear < tempMinEAR)
 			tempMinEAR = ear;
 
+		//刷新阈值
+		if (!(effFrameNumber % 10)) {
+			maxEAR = tempMaxEAR;
+			minEAR = tempMinEAR;
+			tempMaxEAR = -1;
+			tempMinEAR = 10;
+		}
+
 		float former_thresh = threshold;
 		threshold = maxEAR - 0.02 > (maxEAR + minEAR) / 2 ? (maxEAR + minEAR) / 2 : maxEAR - 0.02;
 		
@@ -383,13 +405,6 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 			currentBlink.blinkTimeSum = 0;
 		}
 
-		//刷新阈值
-		if (!(effFrameNumber % 10)) {
-			maxEAR = tempMaxEAR;
-			minEAR = tempMinEAR;
-			tempMaxEAR = -1;
-			tempMinEAR = 10;
-		}
 #pragma endregion
 
 		//维护队列，如果眨眼已经过期，则弹出队列
@@ -577,6 +592,10 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters,cv::Mat &greyIm
 		blinkLastTime = (float)(recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
 		//计算perclos，闭眼总时间/总时间*100%
 		perclos = (float)(recentBlink.back().blinkTimeSum) / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber) * 100;
+		
+		//计算perclos，通过SVM计算闭眼帧数/总帧数
+		float temp = (float)closeSum * 100 / recentSVM.size();
+		perclos = temp > perclos ? temp : perclos;
 	}
 	else if (recentBlink.empty()) {
 		blinkFrequency = 0;
@@ -653,7 +672,7 @@ void ATC::ATC_Thread() {
 
 #pragma region paint
 					//头部姿态盒子
-					Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+					//Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
 				
 					////绘制视线	
 					//float draw_multiplier = 16;

@@ -102,7 +102,7 @@ protected:
 	cv::Ptr<cv::ml::SVM> svm1;
 
 	//Random Forest
-	cv::Ptr<cv::ml::RTrees> rtree;
+	//cv::Ptr<cv::ml::RTrees> rtree;
 
 	//csv writer
 	std::ofstream outFile;
@@ -139,6 +139,11 @@ protected:
 	float blinkFrequency = 0;
 	float blinkInterval = 0;
 	float blinkLastTime = 0;
+
+	//记录最近每帧的svm结果，true代表闭眼
+	std::queue<bool> recentSVM;
+	//闭眼的数值之和，用于perclos计算
+	int closeSum = 0;
 	//perclos：闭眼的帧数/总帧数
 	float perclos = 0;
 	
