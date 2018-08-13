@@ -274,7 +274,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			landmark3D[3 * i + 2] = tempLandmark3D[i + 136];
 		}
 #pragma region gazepoint block
-		cout << saccade_angle_sum << endl;
+		//阈值判定视线是否变化
 		if (abs(gaze_angle_x-gaze_last_angle_x) < 0.01|| abs(gaze_angle_y - gaze_last_angle_y) < 0.01)
 		{
 			gaze_frames++;
@@ -282,18 +282,22 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		}
 		else
 		{
+			//计算此帧视线与上帧视线夹角并累加
 			saccade_angle_sum += GazeCosinDiff(gazeLastvector, gazeVector);
 			if (gaze_frames > 4)
 			{
 				gaze_count++;
 			}
+			//用于计算注视时间，视线变化时清零
 			gaze_frames = 0;
 			//gaze_frame_sum += gaze_frames;
 		}
 		//cout << (abs(gazeaverageLastvector[0] - averageGaze[0]) < 0.05) << endl;
 		//cout << "gazeframe" << " " << gaze_frames << endl;
+		//上帧视线夹角
 		gaze_last_angle_x = gaze_angle_x;
 		gaze_last_angle_y = gaze_angle_y;
+		//按照每秒25帧计算
 		gaze_time = gaze_frames / 25;
 		for (int i = 0; i < 5; i++)
 		{
@@ -795,6 +799,25 @@ void ATC::ATC_Thread() {
 				sprintf(text, "%.2f", fhInstance->saccade_angle_sum);
 				string saccadeanglesumStr("SACCADEAM:");
 				saccadeanglesumStr += text;
+				//头部位置
+				sprintf(text, "%.2f", fhInstance->headpose3D[0]);
+				string leftBrackets("(");
+				string rightBrackts(")");
+				string comma(",");
+				string headposeStr("HEADPOSE:");
+				headposeStr += (leftBrackets + text + comma);
+				sprintf(text, "%.2f", fhInstance->headpose3D[1]);
+				headposeStr += (text + comma);
+				sprintf(text, "%.2f", fhInstance->headpose3D[2]);
+				headposeStr += (text + rightBrackts);
+				//头部旋转角度
+				sprintf(text, "%.2f", fhInstance->headpose3D[3]);
+				string headposeangleStr("HEADPOSEAG:");
+				headposeangleStr += (leftBrackets + text + comma);
+				sprintf(text, "%.2f", fhInstance->headpose3D[4]);
+				headposeangleStr += (text + comma);
+				sprintf(text, "%.2f", fhInstance->headpose3D[5]);
+				headposeangleStr += (text + rightBrackts);
 				/*sprintf(text, "%.2f", fhInstance->gaze_angle_x);
 				string gazeXStr("GAZE_X:");
 				gazeXStr += text;
@@ -810,9 +833,16 @@ void ATC::ATC_Thread() {
 				cv::putText(colorImg, percStr, cv::Point(350, 140), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, diaStr, cv::Point(20, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, ratStr, cv::Point(350, 190), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				//注视次数
 				cv::putText(colorImg, gazecountStr, cv::Point(20, 240), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				//gazetime
 				cv::putText(colorImg, gazetimeStr, cv::Point(350, 240), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				//扫视幅度
 				cv::putText(colorImg, saccadeanglesumStr, cv::Point(20, 290), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				//headpose position
+				cv::putText(colorImg, headposeStr, cv::Point(20, 350), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
+				//headpose angle
+				cv::putText(colorImg, headposeangleStr, cv::Point(20, 400), CV_FONT_HERSHEY_SIMPLEX, 1, CV_RGB(255, 0, 0), 1, CV_AA);
 				writer << colorImg;
 				cv::imshow("test", colorImg);
 				cv::waitKey(5);
