@@ -108,6 +108,12 @@ float FeatureHouse::GetDistance3D(int i, int j)
 	return sqrt(pow(landmark3D[3 * i] - landmark3D[3 * j], 2) + pow(landmark3D[3 * i + 1] - landmark3D[3 * j + 1], 2) + pow(landmark3D[3 * i + 2] - landmark3D[3 * j + 2], 2));
 }
 
+float FeatureHouse::GetDistance3D(float gazePoint[], float gazeLastpoint[])
+{
+
+	return sqrt(pow((gazePoint[0] - gazeLastpoint[0]), 2) + pow((gazePoint[1] - gazeLastpoint[1]), 2) + pow((gazePoint[2] - gazeLastpoint[2]), 2));
+}
+
 float FeatureHouse::EyeAspectRatio(float a, float b, float c)
 {
 	return (a + b) / (2 * c);
@@ -150,6 +156,29 @@ float FeatureHouse::GazeCosinDiff(float * gazeLastvector, float * gazeVector)
 	c = gazeaverageLastvector[0] * averageGaze[0] + gazeaverageLastvector[1] * averageGaze[1] + gazeaverageLastvector[2] * averageGaze[2];
 	d = acos(c / (a*b));
 	return d;
+}
+
+void FeatureHouse::GazePoint(cv::Mat1f face)
+{
+	float parameTerflag;
+	float parameTer;
+	float eyeballCenter[3];
+	cv::Mat offset = (cv::Mat_<float>(3, 1) << 0, -3.5, 7.0);
+	cv::Vec3f eulerAngles(headpose3D[3], headpose3D[4], headpose3D[5]);
+	cv::Matx33f rotMat = Utilities::Euler2RotationMatrix(eulerAngles);
+	face = face.t();
+	cv::Mat eyeballCenterMat = (face.row(36) + face.row(39)) / 2.0f + (cv::Mat(rotMat)*offset).t();
+	//cout << eyeballCenterMat.size << endl;
+
+	std::copy(reinterpret_cast<const float*>(eyeballCenterMat.datastart)
+		, reinterpret_cast<const float*>(eyeballCenterMat.dataend)
+		, eyeballCenter);
+	//cout << eyeballCenter << endl;
+	parameTerflag = gazeVector[0] * planeVector[0] + gazeVector[1] * planeVector[1] + gazeVector[2] * planeVector[2];
+	parameTer = ((planePoint[0] - eyeballCenter[0])*planeVector[0] + (planePoint[1] - eyeballCenter[1])*planeVector[1] + (planePoint[2] - eyeballCenter[2])*planeVector[2]) / parameTerflag;
+	gazePoint[0] = eyeballCenter[0] + gazeVector[0] * parameTer;
+	gazePoint[1] = eyeballCenter[1] + gazeVector[1] * parameTer;
+	gazePoint[2] = eyeballCenter[2] + gazeVector[2] * parameTer;
 }
 FeatureHouse::FeatureHouse() {
 	frameNumber = 0;
@@ -205,11 +234,11 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		au_reg = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsReg();
 		au_class = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsClass();
 		/*for (int i = 0; i < au_reg.size(); ++i)
-			if(au_reg[i].first=="AU45")
-				cout << au_reg[i].first << " " << au_reg[i].second << endl;
+		if(au_reg[i].first=="AU45")
+		cout << au_reg[i].first << " " << au_reg[i].second << endl;
 		for (int i = 0; i < au_class.size(); ++i)
-			if(au_class[i].first=="AU20")
-				cout << au_class[i].first << " " << au_class[i].second << endl;*/
+		if(au_class[i].first=="AU20")
+		cout << au_class[i].first << " " << au_class[i].second << endl;*/
 
 		if (tempFaceModel->eye_model)
 		{
@@ -219,6 +248,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			gaze_angle_x = gaze_angle[0];
 			gaze_angle_y = gaze_angle[1];
 			eyeLandmark2D = LandmarkDetector::CalculateAllEyeLandmarks(*tempFaceModel);
+			GazePoint(tempFaceModel->GetShape(fx, fy, cx, cy));
 			eyeLandmark3D = LandmarkDetector::Calculate3DEyeLandmarks(*tempFaceModel, fx, fy, cx, cy);
 
 			for (int i = 0; i < eyeLandmark2D.size(); i++) {
@@ -291,9 +321,11 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		{
 			gaze_frames++;
 			saccade_angle_sum = 0;
+			saccade_dist_sum = 0;
 		}
 		else
 		{
+			saccade_dist_sum += GetDistance3D(gazeLastpoint, gazePoint);
 			saccade_angle_sum += GazeCosinDiff(gazeLastvector, gazeVector);
 			if (gaze_frames > 4)
 			{
@@ -303,7 +335,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			//gaze_frame_sum += gaze_frames;
 		}
 		//cout << (abs(gazeaverageLastvector[0] - averageGaze[0]) < 0.05) << endl;
-		//cout << "gazeframe" << " " << gaze_frames << endl;
+		//cout << "saccade_angle_sum" << " " << saccade_dist_sum << endl;
 		gaze_last_angle_x = gaze_angle_x;
 		gaze_last_angle_y = gaze_angle_y;
 		gaze_time = gaze_frames / 25;
@@ -312,7 +344,10 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			gazeLastvector[i] = gazeVector[i];
 		}
 		//cout << "gaze_time" << " " << gaze_time << endl;
-
+		for (int i = 0; i < 3; i++)
+		{
+			gazeLastpoint[i] = gazePoint[i];
+		}
 #pragma endregion		
 		//求瞳孔变化
 		float left_eye_small_diameter = (GetEyeDistance3D(20, 24) + GetEyeDistance3D(21, 25) + GetEyeDistance3D(22, 26) + GetEyeDistance3D(23, 27)) / 4;
@@ -349,7 +384,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		cv::Rect rect_left = RectCenterScale(temp_left, cv::Size(temp_left.height, temp_left.width));
 		cv::Rect temp_right = cv::boundingRect(rightEyeLmk);
 		cv::Rect rect_right = RectCenterScale(temp_right, cv::Size(temp_right.height, temp_right.width));
-		
+
 		bool left_eye_sign = true;
 		bool right_eye_sign = true;
 		float res_left = 1;
@@ -357,7 +392,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 		//使用模型
 		//左眼
-		try {			
+		try {
 			cv::Mat eye_rect_left = colorImg(rect_left);
 			cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
 			cv::Mat eye_gray_left;
@@ -367,7 +402,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			eye_gray_left.convertTo(eye_gray_left, CV_32F, 1.0 / 255.0);
 			svm_node* node_left = new svm_node[1 + 576];
 			for (int i = 0; i<576; ++i) {
-				node_left [i].index = i + 1;
+				node_left[i].index = i + 1;
 				node_left[i].value = eye_gray_left.at<float>(i / 24, i % 24);
 			}
 			node_left[576].index = -1;
@@ -378,18 +413,18 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 			/*cv::Mat input_eye_left(cv::Size(24 * 24, 1), CV_32F);
 			for (int i = 0; i < 24; ++i)
-				for (int j = 0; j < 24; ++j)
-					input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
+			for (int j = 0; j < 24; ++j)
+			input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
 			float res_left = svm1->predict(input_eye_left);*/
 
 			/*float res_left = rtree->predict(input_eye_left);
 			cv::Mat tttt;
-			rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/		
+			rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/
 		}
-		catch(...){
+		catch (...) {
 			left_eye_sign = false;
 		}
-		
+
 
 		//右眼
 		try {
@@ -413,18 +448,18 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 			/*cv::Mat input_eye_right(cv::Size(24 * 24, 1), CV_32F);
 			for (int i = 0; i < 24; ++i)
-				for (int j = 0; j < 24; ++j)
-					input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
+			for (int j = 0; j < 24; ++j)
+			input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
 			float res_right = svm1->predict(input_eye_right);*/
 
 			/*float res_right = rtree->predict(input_eye_right);
 			cv::Mat tttt2;
-			rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/		
+			rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/
 		}
 		catch (...) {
 			right_eye_sign = false;
 		}
-		
+
 		while (recentSVM.size() > TIMESLICE)
 		{
 			closeSum = recentSVM.front() ? closeSum - 1 : closeSum;
@@ -839,12 +874,12 @@ void ATC::ATC_Thread() {
 
 					//眼睛轮廓
 					/*for (int i = 8; i <= 19; i++) {
-						cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
-						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
 					}
 					for (int i = 36; i <= 47; i++) {
-						cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
-						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
 					}*/
 				}
 
@@ -889,6 +924,9 @@ void ATC::ATC_Thread() {
 				sprintf(text, "%.2f", fhInstance->saccade_angle_sum);
 				string saccadeanglesumStr("SACCADEAM:");
 				saccadeanglesumStr += text;
+				sprintf(text, "%.2f", fhInstance->saccade_dist_sum);
+				string saccadedistsumStr("SACCADEdst:");
+				saccadedistsumStr += text;
 				//头部位置
 				string headposeStr("HEADPOSE: ");
 				string headposeangleStr("HEADPOSEAG: ");
@@ -924,11 +962,12 @@ void ATC::ATC_Thread() {
 				cv::putText(colorImg, gazecountStr, cv::Point(450, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, gazetimeStr, cv::Point(450, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, saccadeanglesumStr, cv::Point(450, 60), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, saccadedistsumStr, cv::Point(450, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				for (int i = 0; i < fhInstance->au_class.size(); ++i) {
 					sprintf(text, "%.0f", fhInstance->au_class[i].second);
 					string auStr(fhInstance->au_class[i].first + ": ");
 					auStr += text;
-					cv::putText(colorImg, auStr, cv::Point(500, 80 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+					cv::putText(colorImg, auStr, cv::Point(500, 100 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				}
 				//头部姿态
 				cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
@@ -1073,7 +1112,7 @@ ofstream outFile;
 int main(int argc, char **argv)
 {
 	/*for (int i = 0; i < argc; i++) {
-		cout <<i<<" "<< argv[i] << endl;
+	cout <<i<<" "<< argv[i] << endl;
 	}*/
 	ATC* a = ATC::GetInstance(argv[0], true);
 	//a->StartThread("F:\\Project\\ATC\\ATC\\x64\\Release\\YDXJ0004_converter.wmv");
