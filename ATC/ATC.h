@@ -4,6 +4,7 @@
 #include <iostream>
 #include <atomic>
 #include <opencv2/opencv.hpp>
+#include "svm.h"
 #include <fstream>
 #include <queue>
 
@@ -100,6 +101,8 @@ protected:
 
 	//SVM分类器
 	cv::Ptr<cv::ml::SVM> svm1;
+	svm_model* model_L;
+	svm_model* model_R;
 
 	//Random Forest
 	//cv::Ptr<cv::ml::RTrees> rtree;
@@ -123,15 +126,16 @@ protected:
 	//ear的最大值和最小值，初始化
 	float maxEAR = -1;
 	float minEAR = 10;
+	//用于刷新ear的最大值和最小值
 	float tempMaxEAR = -1;
 	float tempMinEAR = 10;
 
 	//used to record the recent blink
 	typedef struct blink {
-		int startFrame = -1;//眨眼开始帧号
-		int endFrame = -1;//眨眼结束帧号
-		unsigned int blinkTimeSum = 0;//这次眨眼以及之前的眨眼的持续时间之和（便于计算）
-									  //unsigned int interval = 0;//这次眨眼与上次的眨眼的间隔时间
+		int startFrame = -1;		//眨眼开始帧号
+		int endFrame = -1;		//眨眼结束帧号
+		unsigned int blinkTimeSum = 0;		//这次眨眼以及之前的眨眼的持续时间之和（便于计算）
+		//unsigned int interval = 0;		//这次眨眼与上次的眨眼的间隔时间
 	}blink;
 	//用于记录当前眨眼的状态，方便入队
 	blink currentBlink;
@@ -140,21 +144,23 @@ protected:
 	float blinkInterval = 0;
 	float blinkLastTime = 0;
 
-	//记录最近每帧的svm结果，true代表闭眼
+	//记录最近每帧的svm结果，true代表闭眼，用于计算perclos的闭眼帧数
 	std::queue<bool> recentSVM;
 	//闭眼的数值之和，用于perclos计算
 	int closeSum = 0;
 	//perclos：闭眼的帧数/总帧数
 	float perclos = 0;
 
+	/*
+	//权重方法
 	//两种方法的开始帧号
 	int startFrame_mod = -1;
 	int startFrame_ear = -1;
-
 	//标志位
-	bool isBlinking = false;
-	//注视扫视块
-#pragma region
+	bool isBlinking = false;*/
+
+
+#pragma region 注视扫视块
 	float gazeLastvector[6] = { 100,100,100,100,100,100 };
 	float gaze_last_angle_x = 0;
 	float gaze_last_angle_y = 0;
@@ -176,26 +182,30 @@ protected:
 	float saccade_angle_sum;
 #pragma endregion
 
-	FeatureHouse();
-	//calculate the distance of two landmarks in 2D
-	float GetDistance(int i, int j);
-	//calculate the distance of two landmarks in 3D
-	float GetDistance3D(int i, int j);
-	//calculate the ear
-	float EyeAspectRatio(float a, float b, float c);
-	//calculate the distance of two eyelandmarks in 2D
-	float GetEyeDistance(int i, int j);
-	//calculate the distance of two eyelandmarks in 3D
-	float GetEyeDistance3D(int i, int j);
-	//以矩形中心为中心放大size大小
-	cv::Rect RectCenterScale(cv::Rect rect, cv::Size size);
-	//2帧间视线方向夹角
-	float GazeCosinDiff(float *gazeaverageLastvector, float *averageGaze);
-	//eye blink count
-	//unsigned int blink;
 	std::mutex output;
 	//functions
 
+	FeatureHouse();
+	//calculate the distance of two landmarks in 2D
+	float GetDistance(int i, int j);
+
+	//calculate the distance of two landmarks in 3D
+	float GetDistance3D(int i, int j);
+
+	//calculate the ear
+	float EyeAspectRatio(float a, float b, float c);
+
+	//calculate the distance of two eyelandmarks in 2D
+	float GetEyeDistance(int i, int j);
+
+	//calculate the distance of two eyelandmarks in 3D
+	float GetEyeDistance3D(int i, int j);
+
+	//以矩形中心为中心放大size大小
+	cv::Rect RectCenterScale(cv::Rect rect, cv::Size size);
+
+	//2帧间视线方向夹角
+	float GazeCosinDiff(float *gazeaverageLastvector, float *averageGaze);
 
 	//SetFeatures with mutex
 	bool SetFeature(void* face_model, void* parameters, cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy);
@@ -232,6 +242,8 @@ protected:
 	std::thread* t;
 	void *parameters;
 	void *face_model;
+	void *face_analysis_params;
+	void *face_analyser;
 	bool OpenFaceInit(const std::string & exePath);
 	std::atomic<bool> threadContinue;
 	std::atomic<bool> useOpenFace;
@@ -246,6 +258,8 @@ public:
 			instance->useOpenFace = useOpenFace;
 			instance->parameters = nullptr;
 			instance->face_model = nullptr;
+			instance->face_analysis_params = nullptr;
+			instance->face_analyser = nullptr;
 			instance->OpenFaceInit(exePath);
 		}
 		return instance;
@@ -279,4 +293,3 @@ public:
 	//@headpose: position_x/y/z ; euler_x/y/z
 	bool GetHeadPose(float headpose[6]);
 };
-
