@@ -225,7 +225,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			else if (au_reg[i].first == "AU20" && au_reg[i].second >= 1.2) {
 				actions.push_back(20);
 			}
-			else if (au_reg[i].first == "AU26" && au_reg[i].second >= 0.8) {
+			else if (au_reg[i].first == "AU26" && au_reg[i].second >= 0.5) {
 				actions.push_back(26);
 			}
 		}
