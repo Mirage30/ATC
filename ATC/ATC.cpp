@@ -792,13 +792,13 @@ void ATC::ATC_Thread() {
 					//cv::rectangle(colorImg, rect, CV_RGB(0, 255, 0));
 					//cv::rectangle(colorImg, cv::boundingRect(rightEyeLmk), CV_RGB(0, 255, 0));
 
-
-					//绘制全部特征点
-					for (int i = 0; i < 68; i++) {
-						cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
-						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					if (GetKeyState(VK_SPACE)) {
+						//绘制全部特征点
+						for (int i = 0; i < 68; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+						}
 					}
-
 
 #pragma region paint
 					////头部姿态盒子
