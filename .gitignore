@@ -265,6 +265,8 @@ __pycache__/
 /ATC/x64
 /ATC/OpenFace-SDK
 /ATC.sln
+/ATC/Eyeoc_svm_L
+/ATC/Eyeoc_svm_R
 *.avi
 *.csv
 *.mp4

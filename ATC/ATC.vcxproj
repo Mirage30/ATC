@@ -20,9 +20,11 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ATC.h" />
+    <ClInclude Include="svm.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="ATC.cpp" />
+    <ClCompile Include="svm.cpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>15.0</VCProjectVersion>
@@ -140,6 +142,7 @@
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>D:\Libraries\opencv_3_4_1\build\include;$(ProjectDir)OpenFace-SDK\local\FaceAnalyser\include;$(ProjectDir)OpenFace-SDK\local\GazeAnalyser\include;$(ProjectDir)OpenFace-SDK\local\LandmarkDetector\include;$(ProjectDir)OpenFace-SDK\local\Utilities\include;$(ProjectDir)OpenFace-SDK\3rdParty\dlib\include;$(ProjectDir)OpenFace-SDK\3rdParty\boost;$(ProjectDir)OpenFace-SDK\3rdParty\boost\boost;$(ProjectDir)OpenFace-SDK\3rdParty\OpenBLAS\include;$(ProjectDir)OpenFace-SDK\3rdParty\tbb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
