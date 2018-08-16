@@ -200,16 +200,45 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 	if (detection_success)
 	{
 		effFrameNumber++;
-		//face_analyser
+
+		//face_analyser部分
 		((FaceAnalysis::FaceAnalyser *)face_analyser)->PredictStaticAUsAndComputeFeatures(colorImg, tempFaceModel->detected_landmarks);
 		au_reg = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsReg();
 		au_class = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsClass();
-		/*for (int i = 0; i < au_reg.size(); ++i)
-			if(au_reg[i].first=="AU45")
-				cout << au_reg[i].first << " " << au_reg[i].second << endl;
-		for (int i = 0; i < au_class.size(); ++i)
-			if(au_class[i].first=="AU20")
-				cout << au_class[i].first << " " << au_class[i].second << endl;*/
+		
+		//判断特殊动作
+		actions.clear();
+		for (int i = 0; i < au_reg.size(); ++i) {
+			//cout << au_reg[i].first << " " << au_reg[i].second << endl;
+			if (au_reg[i].first == "AU04" && au_reg[i].second >= 1) {
+				actions.push_back(4);
+			}
+			else if (au_reg[i].first == "AU10" && au_reg[i].second >= 0.2) {
+				actions.push_back(10);
+			}
+			else if (au_reg[i].first == "AU12" && au_reg[i].second >= 0.5) {
+				actions.push_back(12);
+			}
+			else if (au_reg[i].first == "AU14" && au_reg[i].second >= 0.5) {
+				actions.push_back(14);
+			}
+			else if (au_reg[i].first == "AU20" && au_reg[i].second >= 1.2) {
+				actions.push_back(20);
+			}
+			else if (au_reg[i].first == "AU26" && au_reg[i].second >= 0.8) {
+				actions.push_back(26);
+			}
+		}
+		for (int i = 0; i < au_class.size(); ++i) {
+			if (au_class[i].first == "AU25" && au_class[i].second == 1) {
+				actions.push_back(25);
+			}
+		}
+		/*for (auto au : actions) {
+			cout << au << " ";
+		}
+		cout << endl;*/
+
 
 		if (tempFaceModel->eye_model)
 		{
@@ -231,6 +260,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 				eye_Landmark3D[3 * i + 2] = eyeLandmark3D[i].z;
 			}
 		}
+
 		// Work out the pose of the head from the tracked model
 		pose_estimate = LandmarkDetector::GetPose(*tempFaceModel, fx, fy, cx, cy);
 
@@ -774,57 +804,57 @@ void ATC::ATC_Thread() {
 					////头部姿态盒子
 					//Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
 
-					////绘制视线	
-					//float draw_multiplier = 16;
-					//int draw_shiftbits = 4;
-					////绘制瞳孔的轮廓
-					//for (int i = 0; i <= 35; i++) {
-					//	if (i == 7) {
-					//		cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
-					//		cv::Point p2(fhInstance->eye_Landmark2D[2 * 0], fhInstance->eye_Landmark2D[2 * 0 + 1]);
-					//		cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
-					//		i = 27;
-					//		continue;
-					//	}
-					//	else if (i == 35) {
-					//		cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
-					//		cv::Point p2(fhInstance->eye_Landmark2D[2 * 28], fhInstance->eye_Landmark2D[2 * 28 + 1]);
-					//		cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
-					//		break;
-					//	}
-					//	cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
-					//	cv::Point p2(fhInstance->eye_Landmark2D[2 * (i + 1)], fhInstance->eye_Landmark2D[2 * (i + 1) + 1]);
-					//	cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
-					//}
+					//绘制视线	
+					float draw_multiplier = 16;
+					int draw_shiftbits = 4;
+					//绘制瞳孔的轮廓
+					for (int i = 0; i <= 35; i++) {
+						if (i == 7) {
+							cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+							cv::Point p2(fhInstance->eye_Landmark2D[2 * 0], fhInstance->eye_Landmark2D[2 * 0 + 1]);
+							cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
+							i = 27;
+							continue;
+						}
+						else if (i == 35) {
+							cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+							cv::Point p2(fhInstance->eye_Landmark2D[2 * 28], fhInstance->eye_Landmark2D[2 * 28 + 1]);
+							cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
+							break;
+						}
+						cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+						cv::Point p2(fhInstance->eye_Landmark2D[2 * (i + 1)], fhInstance->eye_Landmark2D[2 * (i + 1) + 1]);
+						cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
+					}
 
-					//// Now draw the gaze lines themselves
-					//cv::Mat cameraMat = (cv::Mat_<float>(3, 3) << imgDataInstance->fx, 0, imgDataInstance->cx, 0, imgDataInstance->fy, imgDataInstance->cy, 0, 0, 0);
+					// Now draw the gaze lines themselves
+					cv::Mat cameraMat = (cv::Mat_<float>(3, 3) << imgDataInstance->fx, 0, imgDataInstance->cx, 0, imgDataInstance->fy, imgDataInstance->cy, 0, 0, 0);
 
-					//// Grabbing the pupil location, to draw eye gaze need to know where the pupil is
-					//cv::Point3f pupil_left(fhInstance->pupilCenter3D[0], fhInstance->pupilCenter3D[1], fhInstance->pupilCenter3D[2]);
-					//cv::Point3f pupil_right(fhInstance->pupilCenter3D[3], fhInstance->pupilCenter3D[4], fhInstance->pupilCenter3D[5]);
+					// Grabbing the pupil location, to draw eye gaze need to know where the pupil is
+					cv::Point3f pupil_left(fhInstance->pupilCenter3D[0], fhInstance->pupilCenter3D[1], fhInstance->pupilCenter3D[2]);
+					cv::Point3f pupil_right(fhInstance->pupilCenter3D[3], fhInstance->pupilCenter3D[4], fhInstance->pupilCenter3D[5]);
 
-					//cv::Point3f gaze_direction0(fhInstance->gazeVector[0], fhInstance->gazeVector[1], fhInstance->gazeVector[2]);
-					//cv::Point3f gaze_direction1(fhInstance->gazeVector[3], fhInstance->gazeVector[4], fhInstance->gazeVector[5]);
+					cv::Point3f gaze_direction0(fhInstance->gazeVector[0], fhInstance->gazeVector[1], fhInstance->gazeVector[2]);
+					cv::Point3f gaze_direction1(fhInstance->gazeVector[3], fhInstance->gazeVector[4], fhInstance->gazeVector[5]);
 
-					//std::vector<cv::Point3f> points_left;
-					//points_left.push_back(cv::Point3f(pupil_left));
-					//points_left.push_back(cv::Point3f(pupil_left) + cv::Point3f(gaze_direction0)*50.0);
+					std::vector<cv::Point3f> points_left;
+					points_left.push_back(cv::Point3f(pupil_left));
+					points_left.push_back(cv::Point3f(pupil_left) + cv::Point3f(gaze_direction0)*50.0);
 
-					//std::vector<cv::Point3f> points_right;
-					//points_right.push_back(cv::Point3f(pupil_right));
-					//points_right.push_back(cv::Point3f(pupil_right) + cv::Point3f(gaze_direction1)*50.0);
+					std::vector<cv::Point3f> points_right;
+					points_right.push_back(cv::Point3f(pupil_right));
+					points_right.push_back(cv::Point3f(pupil_right) + cv::Point3f(gaze_direction1)*50.0);
 
-					//cv::Mat_<float> proj_points;
-					//cv::Mat_<float> mesh_0 = (cv::Mat_<float>(2, 3) << points_left[0].x, points_left[0].y, points_left[0].z, points_left[1].x, points_left[1].y, points_left[1].z);
-					//Utilities::Project(proj_points, mesh_0, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
-					//cv::line(colorImg, cv::Point(cvRound(proj_points.at<float>(0, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(0, 1) * (float)draw_multiplier)),
-					//	cv::Point(cvRound(proj_points.at<float>(1, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(1, 1) * (float)draw_multiplier)), cv::Scalar(110, 220, 0), 2, CV_AA, draw_shiftbits);
+					cv::Mat_<float> proj_points;
+					cv::Mat_<float> mesh_0 = (cv::Mat_<float>(2, 3) << points_left[0].x, points_left[0].y, points_left[0].z, points_left[1].x, points_left[1].y, points_left[1].z);
+					Utilities::Project(proj_points, mesh_0, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+					cv::line(colorImg, cv::Point(cvRound(proj_points.at<float>(0, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(0, 1) * (float)draw_multiplier)),
+						cv::Point(cvRound(proj_points.at<float>(1, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(1, 1) * (float)draw_multiplier)), cv::Scalar(110, 220, 0), 2, CV_AA, draw_shiftbits);
 
-					//cv::Mat_<float> mesh_1 = (cv::Mat_<float>(2, 3) << points_right[0].x, points_right[0].y, points_right[0].z, points_right[1].x, points_right[1].y, points_right[1].z);
-					//Utilities::Project(proj_points, mesh_1, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
-					//cv::line(colorImg, cv::Point(cvRound(proj_points.at<float>(0, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(0, 1) * (float)draw_multiplier)),
-					//	cv::Point(cvRound(proj_points.at<float>(1, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(1, 1) * (float)draw_multiplier)), cv::Scalar(110, 220, 0), 2, CV_AA, draw_shiftbits);
+					cv::Mat_<float> mesh_1 = (cv::Mat_<float>(2, 3) << points_right[0].x, points_right[0].y, points_right[0].z, points_right[1].x, points_right[1].y, points_right[1].z);
+					Utilities::Project(proj_points, mesh_1, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+					cv::line(colorImg, cv::Point(cvRound(proj_points.at<float>(0, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(0, 1) * (float)draw_multiplier)),
+						cv::Point(cvRound(proj_points.at<float>(1, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(1, 1) * (float)draw_multiplier)), cv::Scalar(110, 220, 0), 2, CV_AA, draw_shiftbits);
 #pragma endregion
 
 					//瞳孔特征点绘制
@@ -920,13 +950,82 @@ void ATC::ATC_Thread() {
 				//瞳孔
 				cv::putText(colorImg, diaStr, cv::Point(20, 180), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, ratStr, cv::Point(20, 200), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+
+				//特殊动作
+				string browStr("brow: ");
+				string lipStr("lip: ");
+				string jawStr("jaw: ");
+				bool brow = false, lip = false, jaw = false;
+				for (auto act : fhInstance->actions) {
+					switch (act)
+					{
+					case 4:
+						browStr += "brow lowerer";
+						brow = true;
+						break;
+					/*case 10:
+						lipStr = lipStr + (lip ? " & upper lip raiser" : "upper lip raiser");
+						lip = true;
+						break;*/
+					case 12:
+						lipStr = lipStr + (lip ? " & lip corner puller" : "lip corner puller");
+						lip = true;
+						break;
+					case 14:
+						lipStr = lipStr + (lip ? " & dimpler" : "dimpler");
+						lip = true;
+						break;
+					/*case 20:
+						lipStr = lipStr + (lip ? " & lip strethed" : "lip strethed");
+						lip = true;
+						break;*/
+					case 25:
+						lipStr = lipStr + (lip ? " & lip part" : "lip part");
+						lip = true;
+						break;
+					case 26:
+						jawStr += "jaw drop";
+						jaw = true;
+						break;
+					default:
+						break;
+					}
+				}
+				if(brow)
+					cv::putText(colorImg, browStr, cv::Point(20, 240), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else {
+					browStr += "normal";
+					cv::putText(colorImg, browStr, cv::Point(20, 240), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				}
+
+				if (lip)
+					cv::putText(colorImg, lipStr, cv::Point(20, 260), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else {
+					lipStr += "normal";
+					cv::putText(colorImg, lipStr, cv::Point(20, 260), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				}
+
+				if (jaw)
+					cv::putText(colorImg, jawStr, cv::Point(20, 280), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else {
+					jawStr += "normal";
+					cv::putText(colorImg, jawStr, cv::Point(20, 280), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				}
+
 				//注视
 				cv::putText(colorImg, gazecountStr, cv::Point(450, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, gazetimeStr, cv::Point(450, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, saccadeanglesumStr, cv::Point(450, 60), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				for (int i = 0; i < fhInstance->au_class.size(); ++i) {
+				//AU
+				/*for (int i = 0; i < fhInstance->au_class.size(); ++i) {
 					sprintf(text, "%.0f", fhInstance->au_class[i].second);
 					string auStr(fhInstance->au_class[i].first + ": ");
+					auStr += text;
+					cv::putText(colorImg, auStr, cv::Point(530, 80 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				}*/
+				for (int i = 0; i < fhInstance->au_reg.size(); ++i) {
+					sprintf(text, "%.3f", fhInstance->au_reg[i].second);
+					string auStr(fhInstance->au_reg[i].first + ": ");
 					auStr += text;
 					cv::putText(colorImg, auStr, cv::Point(500, 80 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				}
