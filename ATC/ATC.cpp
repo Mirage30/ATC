@@ -337,73 +337,89 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		cv::Rect rect_left = RectCenterScale(temp_left, cv::Size(temp_left.height, temp_left.width));
 		cv::Rect temp_right = cv::boundingRect(rightEyeLmk);
 		cv::Rect rect_right = RectCenterScale(temp_right, cv::Size(temp_right.height, temp_right.width));
+		
+		bool left_eye_sign = true;
+		bool right_eye_sign = true;
+		float res_left = 1;
+		float res_right = 1;
 
 		//使用模型
 		//左眼
-		cv::Mat eye_rect_left = colorImg(rect_left);
-		cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
-		cv::Mat eye_gray_left;
-		cv::cvtColor(eye_rect_left, eye_gray_left, CV_BGR2GRAY);
-		//cv::equalizeHist(eye_gray_left, eye_gray_left);
-		//cv::imshow("left_eye", eye_gray_left);
-		eye_gray_left.convertTo(eye_gray_left, CV_32F, 1.0 / 255.0);
-		svm_node* node_left = new svm_node[1 + 576];
-		for (int i = 0; i<576; ++i) {
-			node_left [i].index = i + 1;
-			node_left[i].value = eye_gray_left.at<float>(i / 24, i % 24);
+		try {			
+			cv::Mat eye_rect_left = colorImg(rect_left);
+			cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
+			cv::Mat eye_gray_left;
+			cv::cvtColor(eye_rect_left, eye_gray_left, CV_BGR2GRAY);
+			//cv::equalizeHist(eye_gray_left, eye_gray_left);
+			//cv::imshow("left_eye", eye_gray_left);
+			eye_gray_left.convertTo(eye_gray_left, CV_32F, 1.0 / 255.0);
+			svm_node* node_left = new svm_node[1 + 576];
+			for (int i = 0; i<576; ++i) {
+				node_left [i].index = i + 1;
+				node_left[i].value = eye_gray_left.at<float>(i / 24, i % 24);
+			}
+			node_left[576].index = -1;
+			double* prob_l = new double[2];
+			res_left = (float)svm_predict_probability(model_L, node_left, prob_l);
+			delete node_left;
+			cout << res_left << "  " << prob_l[1] << " ";
+
+			/*cv::Mat input_eye_left(cv::Size(24 * 24, 1), CV_32F);
+			for (int i = 0; i < 24; ++i)
+				for (int j = 0; j < 24; ++j)
+					input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
+			float res_left = svm1->predict(input_eye_left);*/
+
+			/*float res_left = rtree->predict(input_eye_left);
+			cv::Mat tttt;
+			rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/		
 		}
-		node_left[576].index = -1;
-		double* prob_l = new double[2];
-		float res_left = (float)svm_predict_probability(model_L, node_left, prob_l);
-		delete node_left;
-
-		/*cv::Mat input_eye_left(cv::Size(24 * 24, 1), CV_32F);
-		for (int i = 0; i < 24; ++i)
-			for (int j = 0; j < 24; ++j)
-				input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
-		float res_left = svm1->predict(input_eye_left);*/
-
-		/*float res_left = rtree->predict(input_eye_left);
-		cv::Mat tttt;
-		rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/		
-
+		catch(...){
+			left_eye_sign = false;
+		}
 		
 
 		//右眼
-		cv::Mat eye_rect_right = colorImg(rect_right);
-		cv::resize(eye_rect_right, eye_rect_right, cv::Size(24, 24));
-		cv::Mat eye_gray_right;
-		cv::cvtColor(eye_rect_right, eye_gray_right, CV_BGR2GRAY);
-		//cv::equalizeHist(eye_gray_right, eye_gray_right);
-		//cv::imshow("right_eye", eye_gray_right);
-		eye_gray_right.convertTo(eye_gray_right, CV_32F, 1.0 / 255.0);
-		svm_node* node_right = new svm_node[1 + 576];
-		for (int i = 0; i<576; ++i) {
-			node_right[i].index = i + 1;
-			node_right[i].value = eye_gray_right.at<float>(i / 24, i % 24);
+		try {
+			cv::Mat eye_rect_right = colorImg(rect_right);
+			cv::resize(eye_rect_right, eye_rect_right, cv::Size(24, 24));
+			cv::Mat eye_gray_right;
+			cv::cvtColor(eye_rect_right, eye_gray_right, CV_BGR2GRAY);
+			//cv::equalizeHist(eye_gray_right, eye_gray_right);
+			//cv::imshow("right_eye", eye_gray_right);
+			eye_gray_right.convertTo(eye_gray_right, CV_32F, 1.0 / 255.0);
+			svm_node* node_right = new svm_node[1 + 576];
+			for (int i = 0; i<576; ++i) {
+				node_right[i].index = i + 1;
+				node_right[i].value = eye_gray_right.at<float>(i / 24, i % 24);
+			}
+			node_right[576].index = -1;
+			double* prob_r = new double[2];
+			res_right = (float)svm_predict_probability(model_R, node_right, prob_r);
+			delete node_right;
+			cout << res_right << " " << prob_r[1];
+
+			/*cv::Mat input_eye_right(cv::Size(24 * 24, 1), CV_32F);
+			for (int i = 0; i < 24; ++i)
+				for (int j = 0; j < 24; ++j)
+					input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
+			float res_right = svm1->predict(input_eye_right);*/
+
+			/*float res_right = rtree->predict(input_eye_right);
+			cv::Mat tttt2;
+			rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/		
 		}
-		node_right[576].index = -1;
-		double* prob_r = new double[2];
-		float res_right = (float)svm_predict_probability(model_R, node_right, prob_r);
-		delete node_right;
-
-		/*cv::Mat input_eye_right(cv::Size(24 * 24, 1), CV_32F);
-		for (int i = 0; i < 24; ++i)
-			for (int j = 0; j < 24; ++j)
-				input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
-		float res_right = svm1->predict(input_eye_right);*/
-
-		/*float res_right = rtree->predict(input_eye_right);
-		cv::Mat tttt2;
-		rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/		
+		catch (...) {
+			right_eye_sign = false;
+		}
 		
-
 		while (recentSVM.size() > TIMESLICE)
 		{
 			closeSum = recentSVM.front() ? closeSum - 1 : closeSum;
 			recentSVM.pop();
 		}
-		if (!res_right && !res_left) {
+
+		if (left_eye_sign && right_eye_sign && !res_left && !res_right) {
 			recentSVM.push(true);
 			closeSum++;
 		}
@@ -412,7 +428,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			recentSVM.push(false);
 		}
 
-		cout << res_left  << "  "<< prob_l[1] << " " << res_right << " "  << prob_r[1] << endl;
+		cout << endl;
 #pragma endregion
 
 		//头部转变角度之和
