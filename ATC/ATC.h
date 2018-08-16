@@ -98,7 +98,10 @@ protected:
 	void *face_analysis_params;
 	void *face_analyser;
 	std::vector<std::pair<std::string, double>> au_reg;
-	std::vector<std::pair<std::string, double>> au_class;
+	std::vector<std::pair<std::string, double>> au_class;	
+
+	//存储发生了的动作序号
+	std::vector<int> actions;
 
 	//瞳孔直径
 	float eye_diameter;
