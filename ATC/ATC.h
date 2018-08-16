@@ -94,6 +94,12 @@ protected:
 	float eye_Landmark2D[56 * 2];
 	float eye_Landmark3D[56 * 3];
 
+	//脸部分析模型
+	void *face_analysis_params;
+	void *face_analyser;
+	std::vector<std::pair<std::string, double>> au_reg;
+	std::vector<std::pair<std::string, double>> au_class;
+
 	//瞳孔直径
 	float eye_diameter;
 	//瞳孔和虹膜的比值
@@ -242,8 +248,6 @@ protected:
 	std::thread* t;
 	void *parameters;
 	void *face_model;
-	void *face_analysis_params;
-	void *face_analyser;
 	bool OpenFaceInit(const std::string & exePath);
 	std::atomic<bool> threadContinue;
 	std::atomic<bool> useOpenFace;
@@ -258,8 +262,6 @@ public:
 			instance->useOpenFace = useOpenFace;
 			instance->parameters = nullptr;
 			instance->face_model = nullptr;
-			instance->face_analysis_params = nullptr;
-			instance->face_analyser = nullptr;
 			instance->OpenFaceInit(exePath);
 		}
 		return instance;

@@ -5,6 +5,7 @@
 #include <Visualizer.h>
 #include <VisualizationUtils.h>
 #include <RotationHelpers.h>
+#include "FaceAnalyser.h"
 #include "GazeEstimation.h"
 #include <iostream>
 #include <fstream>
@@ -199,6 +200,17 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 	if (detection_success)
 	{
 		effFrameNumber++;
+		//face_analyser
+		((FaceAnalysis::FaceAnalyser *)face_analyser)->PredictStaticAUsAndComputeFeatures(colorImg, tempFaceModel->detected_landmarks);
+		au_reg = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsReg();
+		au_class = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsClass();
+		/*for (int i = 0; i < au_reg.size(); ++i)
+			if(au_reg[i].first=="AU45")
+				cout << au_reg[i].first << " " << au_reg[i].second << endl;
+		for (int i = 0; i < au_class.size(); ++i)
+			if(au_class[i].first=="AU20")
+				cout << au_class[i].first << " " << au_class[i].second << endl;*/
+
 		if (tempFaceModel->eye_model)
 		{
 			GazeAnalysis::EstimateGaze(*tempFaceModel, gazeDirection0, fx, fy, cx, cy, true);
@@ -362,7 +374,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			double* prob_l = new double[2];
 			res_left = (float)svm_predict_probability(model_L, node_left, prob_l);
 			delete node_left;
-			cout << res_left << "  " << prob_l[1] << " ";
+			//cout << res_left << "  " << prob_l[1] << " ";
 
 			/*cv::Mat input_eye_left(cv::Size(24 * 24, 1), CV_32F);
 			for (int i = 0; i < 24; ++i)
@@ -397,7 +409,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			double* prob_r = new double[2];
 			res_right = (float)svm_predict_probability(model_R, node_right, prob_r);
 			delete node_right;
-			cout << res_right << " " << prob_r[1];
+			//cout << res_right << " " << prob_r[1];
 
 			/*cv::Mat input_eye_right(cv::Size(24 * 24, 1), CV_32F);
 			for (int i = 0; i < 24; ++i)
@@ -428,7 +440,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			recentSVM.push(false);
 		}
 
-		cout << endl;
+		//cout << endl;
 #pragma endregion
 
 		//头部转变角度之和
@@ -734,17 +746,6 @@ void ATC::ATC_Thread() {
 
 				//绘制眼部特征点
 				if (detection_success) {
-					/*auto tempFaceAnalyser = reinterpret_cast<FaceAnalysis::FaceAnalyser*>(face_analyser);
-					auto tempFaceModel = reinterpret_cast<LandmarkDetector::CLNF*>(face_model);
-					tempFaceAnalyser->AddNextFrame(colorImg, tempFaceModel->detected_landmarks, tempFaceModel->detection_success, 0);
-
-					std::vector<std::pair<std::string, double>> AU_predictions_reg = tempFaceAnalyser->GetCurrentAUsReg();
-					std::vector<std::pair<std::string, double>> AU_predictions_class = tempFaceAnalyser->GetCurrentAUsClass();
-
-					cout << AU_predictions_reg.size() << endl;*/
-
-
-
 					//保存学习所用数据
 					//cv::imshow("eye", eye_gray);
 					//if (fhInstance->ear < fhInstance->threshold) {
@@ -920,9 +921,15 @@ void ATC::ATC_Thread() {
 				cv::putText(colorImg, diaStr, cv::Point(20, 180), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, ratStr, cv::Point(20, 200), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				//注视
-				cv::putText(colorImg, gazecountStr, cv::Point(420, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, gazetimeStr, cv::Point(420, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, saccadeanglesumStr, cv::Point(420, 60), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, gazecountStr, cv::Point(450, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, gazetimeStr, cv::Point(450, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, saccadeanglesumStr, cv::Point(450, 60), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				for (int i = 0; i < fhInstance->au_class.size(); ++i) {
+					sprintf(text, "%.0f", fhInstance->au_class[i].second);
+					string auStr(fhInstance->au_class[i].first + ": ");
+					auStr += text;
+					cv::putText(colorImg, auStr, cv::Point(500, 80 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				}
 				//头部姿态
 				cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, headposeangleStr, cv::Point(20, 460), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
@@ -1036,8 +1043,8 @@ bool ATC::OpenFaceInit(const std::string & exePath) {
 	std::cout << reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location << std::endl;
 	face_model = new LandmarkDetector::CLNF(reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location);
 
-	/*face_analysis_params = new FaceAnalysis::FaceAnalyserParameters(arguments);
-	face_analyser = new FaceAnalysis::FaceAnalyser(*reinterpret_cast<FaceAnalysis::FaceAnalyserParameters*>(face_analysis_params));*/
+	fhInstance->face_analysis_params = new FaceAnalysis::FaceAnalyserParameters(arguments);
+	fhInstance->face_analyser = new FaceAnalysis::FaceAnalyser(*reinterpret_cast<FaceAnalysis::FaceAnalyserParameters*>(fhInstance->face_analysis_params));
 
 	if (!reinterpret_cast<LandmarkDetector::CLNF*>(face_model)->loaded_successfully)
 	{
