@@ -956,12 +956,18 @@ void ATC::ATC_Thread() {
 				string lipStr("lip: ");
 				string jawStr("jaw: ");
 				bool brow = false, lip = false, jaw = false;
+				cv::Point temp1(fhInstance->landmark2D[2 * 48], fhInstance->landmark2D[2 * 48 + 1]);
+				//cv::Point temp2(fhInstance->landmark2D[2 * 54], fhInstance->landmark2D[2 * 54 + 1]);
 				for (auto act : fhInstance->actions) {
 					switch (act)
 					{
 					case 4:
 						browStr += "brow lowerer";
 						brow = true;
+						for (int i = 17; i <= 26; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
+						}
 						break;
 					/*case 10:
 						lipStr = lipStr + (lip ? " & upper lip raiser" : "upper lip raiser");
@@ -969,12 +975,18 @@ void ATC::ATC_Thread() {
 						break;*/
 					case 12:
 						lipStr = lipStr + (lip ? " & lip corner puller" : "lip corner puller");
-						lip = true;
+						lip = true;						
+						cv::circle(colorImg, temp1, 2, cv::Scalar(0, 255, 0), -1);
+						//cv::circle(colorImg, temp2, 2, cv::Scalar(0, 255, 0), -1);
+						for (int i = 54; i <= 59; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
+						}
 						break;
-					case 14:
+					/*case 14:
 						lipStr = lipStr + (lip ? " & dimpler" : "dimpler");
 						lip = true;
-						break;
+						break;*/
 					/*case 20:
 						lipStr = lipStr + (lip ? " & lip strethed" : "lip strethed");
 						lip = true;
@@ -982,10 +994,18 @@ void ATC::ATC_Thread() {
 					case 25:
 						lipStr = lipStr + (lip ? " & lip part" : "lip part");
 						lip = true;
+						for (int i = 60; i <= 67; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
+						}
 						break;
 					case 26:
 						jawStr += "jaw drop";
 						jaw = true;
+						for (int i = 5; i <= 11; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
+						}
 						break;
 					default:
 						break;
