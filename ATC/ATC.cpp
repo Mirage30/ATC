@@ -167,8 +167,10 @@ FeatureHouse::FeatureHouse() {
 	outFile.open("test.csv", ios::out);
 	outFile << "eye_diameter" << ',' << "eye_ratio" << ',';
 	outFile << "ear" << ',' << "blink" << ',' << "threshold" << ',' << "maxEar" << ',' << "minEar" << ',';
+	outFile << "b_freq" << ',' << "b_interval" << ',' << "b_last" << ',' << "perclos" << ',';
 	//outFile << "res_left" << ',' << "res_right" << ',';
 	outFile << "gaze_0_x" << ',' << "gaze_0_y" << ',' << "gaze_0_z" << ',' << "gaze_1_x" << ',' << "gaze_1_y" << ',' << "gaze_1_z" << ',' << " gaze_angle_x" << ',' << " gaze_angle_y" << ',';
+	outFile << "gaze_count" << ',' << "gaze_time" << ',' << "saccade_angle_sum" << ',';
 	for (int i = 0; i < 56; i++) {
 		outFile << " eye_lmk_x_" << i << ',' << "eye_lmk_y_" << i << ',';
 	}
@@ -182,7 +184,6 @@ FeatureHouse::FeatureHouse() {
 		outFile << "X_" << i << ',' << "Y_" << i << ',' << "Z_" << i << ',';
 	}
 	outFile << "pose_Tx" << ',' << "pose_Ty" << ',' << "pose_Tz" << ',' << "pose_Rx" << ',' << "pose_Ry" << ',' << "pose_Rz" << ',';
-	outFile << endl;
 }
 
 bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy) {
@@ -206,6 +207,17 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		au_reg = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsReg();
 		au_class = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsClass();
 		
+		if (!isInit) {
+			for (int i = 0; i < au_reg.size(); i++) {
+				outFile << au_reg[i].first << "_r" << ',';
+			}
+			for (int i = 0; i < au_class.size(); i++) {
+				outFile << au_class[i].first << "_c" << ',';
+			}
+			outFile << endl;
+			isInit = true;
+		}
+
 		//判断特殊动作
 		actions.clear();
 		for (int i = 0; i < au_reg.size(); ++i) {
@@ -475,6 +487,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 		//头部转变角度之和
 		float eu_sum = 0;
+		headpose_change = false;
 		if (init_head) {
 			for (int i = 3; i <= 5; i++)
 				eu_sum += abs(former_headpose3D[i] - headpose3D[i]);
@@ -486,8 +499,19 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 				currentBlink.blinkTimeSum = 0;
 			}
 
-			//cout << eu_sum << " ";
-			/*for (int i = 0; i < 6; i++) {
+			if (eu_sum > 0.05) {
+				headpose_change = true;
+				showBox = 15;
+			}
+
+			/*
+			//头部距离改变
+			eu_sum = 0;
+			for (int i = 0; i <= 2; i++)
+				eu_sum += abs(former_headpose3D[i] - headpose3D[i]);*/
+
+			/*cout << eu_sum << " ";
+			for (int i = 0; i < 6; i++) {
 			cout << headpose3D[i] << " ";
 			}
 			cout << endl;*/
@@ -684,11 +708,13 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		//将数据写入csv文件，作为记录
 		outFile << eye_diameter << ',' << eye_ratio << ',';
 		outFile << ear << ',' << blink_count << ',' << threshold << ',' << maxEAR << ',' << minEAR << ',';
+		outFile << blinkFrequency << ',' << blinkInterval << ',' << blinkLastTime << ',' << perclos << ',';
 		//outFile << res_left << ',' << res_right << ',';
 		for (int i = 0; i < 6; i++) {
 			outFile << gazeVector[i] << ',';
 		}
 		outFile << gaze_angle_x << ',' << gaze_angle_y << ',';
+		outFile << gaze_count << ',' << gaze_time << ',' << saccade_angle_sum << ',';
 		for (int i = 0; i < 56; i++) {
 			outFile << eye_Landmark2D[i * 2] << ',' << eye_Landmark2D[i * 2 + 1] << ',';
 		}
@@ -703,6 +729,12 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		}
 		for (int i = 0; i < 6; i++) {
 			outFile << headpose3D[i] << ',';
+		}
+		for (int i = 0; i < au_reg.size(); i++) {
+			outFile << au_reg[i].second << ',';
+		}
+		for (int i = 0; i < au_class.size(); i++) {
+			outFile << au_class[i].second << ',';
 		}
 		outFile << endl;
 	}
@@ -776,21 +808,15 @@ void ATC::ATC_Thread() {
 
 				//绘制眼部特征点
 				if (detection_success) {
-					//保存学习所用数据
-					//cv::imshow("eye", eye_gray);
-					//if (fhInstance->ear < fhInstance->threshold) {
-					//	close++;
-					//	filePath = "./data/close/img_" + to_string(close) + ".jpg";
-					//}
-					//else {
-					//	open++;
-					//	filePath = "./data/open/img_" + to_string(open) + ".jpg";
-					//}
-					//cv::imwrite(filePath, eye_gray);
-
 					//绘制眼部矩形
 					//cv::rectangle(colorImg, rect, CV_RGB(0, 255, 0));
 					//cv::rectangle(colorImg, cv::boundingRect(rightEyeLmk), CV_RGB(0, 255, 0));
+
+					//如果头部姿态变动过大就显示
+					if (fhInstance->showBox > 0) {
+						Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+						fhInstance->showBox--;
+					}
 
 #pragma region paint
 					if (GetKeyState(VK_SPACE)) {
