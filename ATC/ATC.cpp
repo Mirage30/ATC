@@ -9,6 +9,20 @@
 #include "GazeEstimation.h"
 #include <iostream>
 #include <fstream>
+
+
+//#define EAR_THRESH 0.28
+#define EYE_FRAME_MIN 2
+#define EYE_FRAME_MAX 8
+//timeslice时间片 帧数 一秒30帧
+#define TIMESLICE 900
+
+//阈值
+#define FREQ_THRESH 30
+#define INTER_THRESH 5
+#define LAST_THRESH 1
+#define PERCLOS_THRESH 30
+
 ImgData* ImgData::instance = nullptr;
 ImgData* ATC::imgDataInstance = nullptr;
 //PeopleFeature* PeopleFeature::instance = nullptr;
@@ -92,12 +106,6 @@ bool ImgData::Open(const std::string & fileName) {
 #pragma endregion
 
 #pragma region FeatureHouse
-
-//#define EAR_THRESH 0.28
-#define EYE_FRAME_MIN 2
-#define EYE_FRAME_MAX 8
-//timeslice时间片 帧数 一秒30帧
-#define TIMESLICE 900
 float FeatureHouse::GetDistance(int i, int j)
 {
 	return sqrt(pow(landmark2D[2 * i] - landmark2D[2 * j], 2) + pow(landmark2D[2 * i + 1] - landmark2D[2 * j + 1], 2));
@@ -510,11 +518,11 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			for (int i = 0; i <= 2; i++)
 				eu_sum += abs(former_headpose3D[i] - headpose3D[i]);*/
 
-			/*cout << eu_sum << " ";
+			//cout << eu_sum << " ";
 			for (int i = 0; i < 6; i++) {
 			cout << headpose3D[i] << " ";
 			}
-			cout << endl;*/
+			cout << endl;
 		}
 
 		std::copy(headpose3D, headpose3D + 6, former_headpose3D);
@@ -969,10 +977,25 @@ void ATC::ATC_Thread() {
 				cv::putText(colorImg, blinkStr, cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, earStr, cv::Point(20, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				//眨眼统计
-				cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, interStr, cv::Point(20, 100), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, lastStr, cv::Point(20, 120), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				if (fhInstance->blinkFrequency < FREQ_THRESH)
+					cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (fhInstance->blinkInterval < INTER_THRESH)
+					cv::putText(colorImg, interStr, cv::Point(20, 100), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, interStr, cv::Point(20, 100), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (fhInstance->blinkLastTime < LAST_THRESH)
+					cv::putText(colorImg, lastStr, cv::Point(20, 120), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, lastStr, cv::Point(20, 120), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (fhInstance->perclos < PERCLOS_THRESH)
+					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
 				//瞳孔
 				cv::putText(colorImg, diaStr, cv::Point(20, 180), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, ratStr, cv::Point(20, 200), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
