@@ -14,15 +14,16 @@
 //#define EAR_THRESH 0.28
 #define EYE_FRAME_MIN 2
 #define EYE_FRAME_MAX 8
-//timesliceÊ±¼äÆ¬ Ö¡Êı Ò»Ãë30Ö¡
+//timesliceÊ±ï¿½ï¿½Æ¬ Ö¡ï¿½ï¿½ Ò»ï¿½ï¿½30Ö¡
 #define TIMESLICE 900
 
-//ãĞÖµ
+//ï¿½ï¿½Öµ
 #define FREQ_THRESH 30
 #define INTER_THRESH 5
 #define LAST_THRESH 1
 #define PERCLOS_THRESH 30
-
+#define HEADPOSE_THRESH 450
+#define	HEADPOSEANGLE_THRESH 0.3
 ImgData* ImgData::instance = nullptr;
 ImgData* ATC::imgDataInstance = nullptr;
 //PeopleFeature* PeopleFeature::instance = nullptr;
@@ -106,6 +107,7 @@ bool ImgData::Open(const std::string & fileName) {
 #pragma endregion
 
 #pragma region FeatureHouse
+
 float FeatureHouse::GetDistance(int i, int j)
 {
 	return sqrt(pow(landmark2D[2 * i] - landmark2D[2 * j], 2) + pow(landmark2D[2 * i + 1] - landmark2D[2 * j + 1], 2));
@@ -114,6 +116,12 @@ float FeatureHouse::GetDistance(int i, int j)
 float FeatureHouse::GetDistance3D(int i, int j)
 {
 	return sqrt(pow(landmark3D[3 * i] - landmark3D[3 * j], 2) + pow(landmark3D[3 * i + 1] - landmark3D[3 * j + 1], 2) + pow(landmark3D[3 * i + 2] - landmark3D[3 * j + 2], 2));
+}
+
+float FeatureHouse::GetDistance3D(float gazePoint[], float gazeLastpoint[])
+{
+
+	return sqrt(pow((gazePoint[0] - gazeLastpoint[0]), 2) + pow((gazePoint[1] - gazeLastpoint[1]), 2) + pow((gazePoint[2] - gazeLastpoint[2]), 2));
 }
 
 float FeatureHouse::EyeAspectRatio(float a, float b, float c)
@@ -158,6 +166,29 @@ float FeatureHouse::GazeCosinDiff(float * gazeLastvector, float * gazeVector)
 	c = gazeaverageLastvector[0] * averageGaze[0] + gazeaverageLastvector[1] * averageGaze[1] + gazeaverageLastvector[2] * averageGaze[2];
 	d = acos(c / (a*b));
 	return d;
+}
+
+void FeatureHouse::GazePoint(cv::Mat1f face)
+{
+	float parameTerflag;
+	float parameTer;
+	float eyeballCenter[3];
+	cv::Mat offset = (cv::Mat_<float>(3, 1) << 0, -3.5, 7.0);
+	cv::Vec3f eulerAngles(headpose3D[3], headpose3D[4], headpose3D[5]);
+	cv::Matx33f rotMat = Utilities::Euler2RotationMatrix(eulerAngles);
+	face = face.t();
+	cv::Mat eyeballCenterMat = (face.row(36) + face.row(39)) / 2.0f + (cv::Mat(rotMat)*offset).t();
+	//cout << eyeballCenterMat.size << endl;
+
+	std::copy(reinterpret_cast<const float*>(eyeballCenterMat.datastart)
+		, reinterpret_cast<const float*>(eyeballCenterMat.dataend)
+		, eyeballCenter);
+	//cout << eyeballCenter << endl;
+	parameTerflag = gazeVector[0] * planeVector[0] + gazeVector[1] * planeVector[1] + gazeVector[2] * planeVector[2];
+	parameTer = ((planePoint[0] - eyeballCenter[0])*planeVector[0] + (planePoint[1] - eyeballCenter[1])*planeVector[1] + (planePoint[2] - eyeballCenter[2])*planeVector[2]) / parameTerflag;
+	gazePoint[0] = eyeballCenter[0] + gazeVector[0] * parameTer;
+	gazePoint[1] = eyeballCenter[1] + gazeVector[1] * parameTer;
+	gazePoint[2] = eyeballCenter[2] + gazeVector[2] * parameTer;
 }
 FeatureHouse::FeatureHouse() {
 	frameNumber = 0;
@@ -210,11 +241,12 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 	{
 		effFrameNumber++;
 
-		//face_analyser²¿·Ö
+		//face_analyseréƒ¨åˆ†
 		((FaceAnalysis::FaceAnalyser *)face_analyser)->PredictStaticAUsAndComputeFeatures(colorImg, tempFaceModel->detected_landmarks);
 		au_reg = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsReg();
 		au_class = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsClass();
-		
+
+
 		if (!isInit) {
 			for (int i = 0; i < au_reg.size(); i++) {
 				outFile << au_reg[i].first << "_r" << ',';
@@ -226,7 +258,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			isInit = true;
 		}
 
-		//ÅĞ¶ÏÌØÊâ¶¯×÷
+		//ï¿½Ğ¶ï¿½ï¿½ï¿½ï¿½â¶¯ï¿½ï¿½
 		actions.clear();
 		for (int i = 0; i < au_reg.size(); ++i) {
 			//cout << au_reg[i].first << " " << au_reg[i].second << endl;
@@ -255,7 +287,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			}
 		}
 		/*for (auto au : actions) {
-			cout << au << " ";
+		cout << au << " ";
 		}
 		cout << endl;*/
 
@@ -268,6 +300,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			gaze_angle_x = gaze_angle[0];
 			gaze_angle_y = gaze_angle[1];
 			eyeLandmark2D = LandmarkDetector::CalculateAllEyeLandmarks(*tempFaceModel);
+			GazePoint(tempFaceModel->GetShape(fx, fy, cx, cy));
 			eyeLandmark3D = LandmarkDetector::Calculate3DEyeLandmarks(*tempFaceModel, fx, fy, cx, cy);
 
 			for (int i = 0; i < eyeLandmark2D.size(); i++) {
@@ -318,7 +351,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		std::copy(reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.datastart)
 			, reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.dataend)
 			, tempLandmark);
-		//½«landmarkË³Ğò½øĞĞµ÷Õû£¬µ÷Õû³Éx1 y1 x2 y2...x68 y68
+		//å°†landmarké¡ºåºè¿›è¡Œè°ƒæ•´ï¼Œè°ƒæ•´æˆx1 y1 x2 y2...x68 y68
 		for (int i = 0; i < 68; i++) {
 			landmark2D[2 * i] = tempLandmark[i];
 			landmark2D[2 * i + 1] = tempLandmark[i + 68];
@@ -341,9 +374,11 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		{
 			gaze_frames++;
 			saccade_angle_sum = 0;
+			saccade_dist_sum = 0;
 		}
 		else
 		{
+			saccade_dist_sum += GetDistance3D(gazeLastpoint, gazePoint);
 			saccade_angle_sum += GazeCosinDiff(gazeLastvector, gazeVector);
 			if (gaze_frames > 4)
 			{
@@ -353,7 +388,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			//gaze_frame_sum += gaze_frames;
 		}
 		//cout << (abs(gazeaverageLastvector[0] - averageGaze[0]) < 0.05) << endl;
-		//cout << "gazeframe" << " " << gaze_frames << endl;
+		//cout << "saccade_angle_sum" << " " << saccade_dist_sum << endl;
 		gaze_last_angle_x = gaze_angle_x;
 		gaze_last_angle_y = gaze_angle_y;
 		gaze_time = gaze_frames / 25;
@@ -362,16 +397,19 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			gazeLastvector[i] = gazeVector[i];
 		}
 		//cout << "gaze_time" << " " << gaze_time << endl;
-
+		for (int i = 0; i < 3; i++)
+		{
+			gazeLastpoint[i] = gazePoint[i];
+		}
 #pragma endregion		
-		//ÇóÍ«¿×±ä»¯
+		//æ±‚ç³å­”å˜åŒ–
 		float left_eye_small_diameter = (GetEyeDistance3D(20, 24) + GetEyeDistance3D(21, 25) + GetEyeDistance3D(22, 26) + GetEyeDistance3D(23, 27)) / 4;
 		float right_eye_small_diameter = (GetEyeDistance3D(48, 52) + GetEyeDistance3D(49, 53) + GetEyeDistance3D(50, 54) + GetEyeDistance3D(51, 55)) / 4;
 		float left_eye_big_diameter = (GetEyeDistance3D(0, 4) + GetEyeDistance3D(1, 5) + GetEyeDistance3D(2, 6) + GetEyeDistance3D(3, 7)) / 4;
 		float right_eye_big_diameter = (GetEyeDistance3D(28, 32) + GetEyeDistance3D(29, 33) + GetEyeDistance3D(30, 34) + GetEyeDistance3D(31, 35)) / 4;
 		float left_ratio = left_eye_small_diameter / left_eye_big_diameter;
 		float right_ratio = right_eye_small_diameter / right_eye_big_diameter;
-		//Í«¿×Ö±¾¶
+		//ç³å­”ç›´å¾„
 		eye_diameter = (left_eye_small_diameter + right_eye_small_diameter) / 2;
 		float eye_diameter_big = (left_eye_big_diameter + right_eye_big_diameter) / 2;
 		eye_ratio = (left_ratio + right_ratio) / 2;
@@ -380,11 +418,11 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 
 #pragma region SVM
-		//ÓÃÀ´±£´æÑÛ²¿ÌØÕ÷µã
+		//ç”¨æ¥ä¿å­˜çœ¼éƒ¨ç‰¹å¾ç‚¹
 		std::vector<cv::Point> leftEyeLmk;
 		std::vector<cv::Point> rightEyeLmk;
 
-		//ÌØÕ÷µã±£´æ
+		//ç‰¹å¾ç‚¹ä¿å­˜
 		for (int i = 36; i <= 41; i++) {
 			cv::Point p(landmark2D[2 * i], landmark2D[2 * i + 1]);
 			leftEyeLmk.push_back(p);
@@ -394,20 +432,21 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			rightEyeLmk.push_back(p);
 		}
 
-		//ÑÛ²¿¾ØĞÎÈ·¶¨
+		//çœ¼éƒ¨çŸ©å½¢ç¡®å®š
 		cv::Rect temp_left = cv::boundingRect(leftEyeLmk);
 		cv::Rect rect_left = RectCenterScale(temp_left, cv::Size(temp_left.height, temp_left.width));
 		cv::Rect temp_right = cv::boundingRect(rightEyeLmk);
 		cv::Rect rect_right = RectCenterScale(temp_right, cv::Size(temp_right.height, temp_right.width));
-		
+
 		bool left_eye_sign = true;
 		bool right_eye_sign = true;
 		float res_left = 1;
 		float res_right = 1;
 
-		//Ê¹ÓÃÄ£ĞÍ
-		//×óÑÛ
-		try {			
+
+		//Ê¹ï¿½ï¿½Ä£ï¿½ï¿½
+		//ï¿½ï¿½ï¿½ï¿½
+		try {
 			cv::Mat eye_rect_left = colorImg(rect_left);
 			cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
 			cv::Mat eye_gray_left;
@@ -417,7 +456,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			eye_gray_left.convertTo(eye_gray_left, CV_32F, 1.0 / 255.0);
 			svm_node* node_left = new svm_node[1 + 576];
 			for (int i = 0; i<576; ++i) {
-				node_left [i].index = i + 1;
+				node_left[i].index = i + 1;
 				node_left[i].value = eye_gray_left.at<float>(i / 24, i % 24);
 			}
 			node_left[576].index = -1;
@@ -428,20 +467,21 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 			/*cv::Mat input_eye_left(cv::Size(24 * 24, 1), CV_32F);
 			for (int i = 0; i < 24; ++i)
-				for (int j = 0; j < 24; ++j)
-					input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
+			for (int j = 0; j < 24; ++j)
+			input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
 			float res_left = svm1->predict(input_eye_left);*/
 
 			/*float res_left = rtree->predict(input_eye_left);
 			cv::Mat tttt;
-			rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/		
+			rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/
 		}
-		catch(...){
+		catch (...) {
 			left_eye_sign = false;
 		}
-		
 
-		//ÓÒÑÛ
+
+
+		//å³çœ¼
 		try {
 			cv::Mat eye_rect_right = colorImg(rect_right);
 			cv::resize(eye_rect_right, eye_rect_right, cv::Size(24, 24));
@@ -463,18 +503,18 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 			/*cv::Mat input_eye_right(cv::Size(24 * 24, 1), CV_32F);
 			for (int i = 0; i < 24; ++i)
-				for (int j = 0; j < 24; ++j)
-					input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
+			for (int j = 0; j < 24; ++j)
+			input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
 			float res_right = svm1->predict(input_eye_right);*/
 
 			/*float res_right = rtree->predict(input_eye_right);
 			cv::Mat tttt2;
-			rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/		
+			rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/
 		}
 		catch (...) {
 			right_eye_sign = false;
 		}
-		
+
 		while (recentSVM.size() > TIMESLICE)
 		{
 			closeSum = recentSVM.front() ? closeSum - 1 : closeSum;
@@ -493,14 +533,14 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		//cout << endl;
 #pragma endregion
 
-		//Í·²¿×ª±ä½Ç¶ÈÖ®ºÍ
+		//å¤´éƒ¨è½¬å˜è§’åº¦ä¹‹å’Œ
 		float eu_sum = 0;
 		headpose_change = false;
 		if (init_head) {
 			for (int i = 3; i <= 5; i++)
 				eu_sum += abs(former_headpose3D[i] - headpose3D[i]);
 
-			//Èç¹ûÍ·²¿×ª¶¯¹ı´óÔòÖØÖÃÕ£ÑÛÅĞ¶¨Ìõ¼ş
+			//å¦‚æœå¤´éƒ¨è½¬åŠ¨è¿‡å¤§åˆ™é‡ç½®çœ¨çœ¼åˆ¤å®šæ¡ä»¶
 			if (eu_sum > 0.15) {
 				cont_frames = 0;
 				currentBlink.startFrame = -1;
@@ -513,14 +553,14 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			}
 
 			/*
-			//Í·²¿¾àÀë¸Ä±ä
+			//Í·ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä±ï¿½
 			eu_sum = 0;
 			for (int i = 0; i <= 2; i++)
-				eu_sum += abs(former_headpose3D[i] - headpose3D[i]);*/
+			eu_sum += abs(former_headpose3D[i] - headpose3D[i]);*/
 
 			//cout << eu_sum << " ";
 			for (int i = 0; i < 6; i++) {
-			cout << headpose3D[i] << " ";
+				cout << headpose3D[i] << " ";
 			}
 			cout << endl;
 		}
@@ -529,7 +569,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		init_head = true;
 
 #pragma region EAR
-		//×óÓÒÑÛ·Ö±ğ¼ÆËãEAR£¬ÔÙÇóÆ½¾ùÖµ
+		//å·¦å³çœ¼åˆ†åˆ«è®¡ç®—EARï¼Œå†æ±‚å¹³å‡å€¼
 		float former_ear = ear;
 		float left_eye, right_eye;
 		left_eye = EyeAspectRatio(GetDistance3D(37, 41), GetDistance3D(38, 40), GetDistance3D(36, 39));
@@ -547,7 +587,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		if (ear < tempMinEAR)
 			tempMinEAR = ear;
 
-		//Ë¢ĞÂãĞÖµ
+		//åˆ·æ–°é˜ˆå€¼
 		if (!(effFrameNumber % 10)) {
 			maxEAR = tempMaxEAR;
 			minEAR = tempMinEAR;
@@ -558,8 +598,8 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		float former_thresh = threshold;
 		threshold = maxEAR - 0.02 > (maxEAR + minEAR) / 2 ? (maxEAR + minEAR) / 2 : maxEAR - 0.02;
 
-		//ÅÅ³ıÕöÑÛÆ½¾ùearµÍÓÚãĞÖµ¶ø¼ÆÊıÕ£ÑÛÇé¿ö
-		//ãĞÖµ±ä»¯´ó£¬ear±ä»¯Ğ¡£¨ÅÅ³ıÕ£ÑÛ£©£¬Ç°earµÍÓÚãĞÖµ£¬ÏÖear¸ßÓÚãĞÖµ
+		//æ’é™¤ççœ¼å¹³å‡earä½äºé˜ˆå€¼è€Œè®¡æ•°çœ¨çœ¼æƒ…å†µ
+		//é˜ˆå€¼å˜åŒ–å¤§ï¼Œearå˜åŒ–å°ï¼ˆæ’é™¤çœ¨çœ¼ï¼‰ï¼Œå‰earä½äºé˜ˆå€¼ï¼Œç°earé«˜äºé˜ˆå€¼
 		if (former_thresh - threshold >= 0.01 && abs(ear - former_ear) < 0.01 && (former_ear - former_thresh) * (ear - threshold) < 0) {
 			cont_frames = 0;
 			currentBlink.startFrame = -1;
@@ -568,21 +608,21 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 #pragma endregion
 
-		//Î¬»¤¶ÓÁĞ£¬Èç¹ûÕ£ÑÛÒÑ¾­¹ıÆÚ£¬Ôòµ¯³ö¶ÓÁĞ
+		//ç»´æŠ¤é˜Ÿåˆ—ï¼Œå¦‚æœçœ¨çœ¼å·²ç»è¿‡æœŸï¼Œåˆ™å¼¹å‡ºé˜Ÿåˆ—
 		while (!recentBlink.empty() && ((int)frameNumber - TIMESLICE > recentBlink.front().startFrame)) {
 			recentBlink.back().blinkTimeSum -= (recentBlink.front().endFrame - recentBlink.front().startFrame + 1);
 			recentBlink.pop();
 		}
 
-#pragma region È¨ÖØ
-		////¼ÆËãÕ£ÑÛµÄÈ¨ÖØ£¬·Ö±ğÎªÄ£ĞÍ·¨¡¢ear¡¢×ÜÈ¨ÖØ
+#pragma region æƒé‡
+		////è®¡ç®—çœ¨çœ¼çš„æƒé‡ï¼Œåˆ†åˆ«ä¸ºæ¨¡å‹æ³•ã€earã€æ€»æƒé‡
 		//int wt_model = 0, wt_ear = 0, wt;
 
-		////¼ÆËãÈ¨ÖØ
-		////±êÖ¾Î»
+		////è®¡ç®—æƒé‡
+		////æ ‡å¿—ä½
 		//bool sign_mod = false, sign_ear = false;
-		////SVM·½·¨
-		//if (!res_left && !res_right) {	//Á½Ö»ÑÛ¾¦¶¼±Õ
+		////SVMæ–¹æ³•
+		//if (!res_left && !res_right) {	//ä¸¤åªçœ¼ç›éƒ½é—­
 		//	if (startFrame_mod == -1) {
 		//		startFrame_mod = frameNumber;
 		//	}
@@ -592,7 +632,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		//	}
 		//	wt_model = wt_model > 8 ? wt_model : 8;
 		//}
-		//else if (!res_left || !res_right) {		//±ÕÒ»Ö»ÑÛ¾¦
+		//else if (!res_left || !res_right) {		//é—­ä¸€åªçœ¼ç›
 		//	if (startFrame_mod == -1) {
 		//		startFrame_mod = frameNumber;
 		//	}
@@ -603,13 +643,13 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		//	if (cont_frames_mod >= 1 && cont_frames_mod < EYE_FRAME_MAX) {
 		//		wt_model = 5;
 		//	}
-		//	//ÖØÖÃ
+		//	//é‡ç½®
 		//	//startFrame_mod = -1;
 		//	sign_mod = true;
 		//	cont_frames_mod = 0;
 		//}
 
-		////EAR·½·¨
+		////EARæ–¹æ³•
 		//if (threshold != -1) {
 		//	if (ear <= threshold) {
 		//		cont_frames++;
@@ -622,15 +662,15 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		//		if (cont_frames >= EYE_FRAME_MIN && cont_frames < EYE_FRAME_MAX) {
 		//			wt_ear = 10;
 		//		}
-		//		//ÖØÖÃ
+		//		//é‡ç½®
 		//		//startFrame_ear = -1;
 		//		sign_ear = true;
 		//		cont_frames = 0;
 		//	}
 		//}
 
-		////È¨ÖØÇóºÍ
-		////È¨ÖØãĞÖµ£¬Ò»°ãÇé¿öÎª10£¬ÌØÊâÇé¿öÊ±Îª5£¨ÓÉÄ£ĞÍ·¨¿ØÖÆÕ£ÑÛ£©¡£ÌØÊâÇé¿ö°üÀ¨£ºEAR³õÊ¼»¯½×¶Î
+		////æƒé‡æ±‚å’Œ
+		////æƒé‡é˜ˆå€¼ï¼Œä¸€èˆ¬æƒ…å†µä¸º10ï¼Œç‰¹æ®Šæƒ…å†µæ—¶ä¸º5ï¼ˆç”±æ¨¡å‹æ³•æ§åˆ¶çœ¨çœ¼ï¼‰ã€‚ç‰¹æ®Šæƒ…å†µåŒ…æ‹¬ï¼šEARåˆå§‹åŒ–é˜¶æ®µ
 		//int wt_thresh = (threshold == -1) ? 5 : 10;
 		//wt = wt_ear + wt_model;
 		//if (wt >= wt_thresh) {
@@ -654,7 +694,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		//		recentBlink.push(currentBlink);
 		//		//cout << currentBlink.startFrame << " " << currentBlink.endFrame << " " << ear<<" "<<res_left<<" " <<res_right  << endl;
 		//	}
-		//	//ÖØÖÃ
+		//	//é‡ç½®
 		//	currentBlink.startFrame = -1;
 		//	currentBlink.blinkTimeSum = 0;
 		//	isBlinking = false;
@@ -665,8 +705,8 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 #pragma endregion
 
-		//Èç¹ûEARµÍÓÚthresholdµÄ´ÎÊıÔÚÄ³¸öÇø¼äÄÚ£¬¾Í¼ÇÎª1´ÎÕ£ÑÛ
-		//Í¬Ê±¼ÇÂ¼×î½ü10´ÎÕ£ÑÛµÄ¿ªÊ¼Ö¡Êı¡¢½áÊøÖ¡Êı£¬²¢¼ÆËã³öÕ£ÑÛÊ±¼ä×ÜºÍ£¨·½±ã¼ÆËã£©ºÍÓëÉÏ´ÎÕ£ÑÛµÄ¼ä¸ôÊ±¼ä
+		//å¦‚æœEARä½äºthresholdçš„æ¬¡æ•°åœ¨æŸä¸ªåŒºé—´å†…ï¼Œå°±è®°ä¸º1æ¬¡çœ¨çœ¼
+		//åŒæ—¶è®°å½•æœ€è¿‘10æ¬¡çœ¨çœ¼çš„å¼€å§‹å¸§æ•°ã€ç»“æŸå¸§æ•°ï¼Œå¹¶è®¡ç®—å‡ºçœ¨çœ¼æ—¶é—´æ€»å’Œï¼ˆæ–¹ä¾¿è®¡ç®—ï¼‰å’Œä¸ä¸Šæ¬¡çœ¨çœ¼çš„é—´éš”æ—¶é—´
 		if (ear <= threshold) {
 			cont_frames++;
 			if (currentBlink.startFrame == -1) {
@@ -683,13 +723,13 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 				}
 				recentBlink.push(currentBlink);
 			}
-			//ÖØÖÃ
+			//é‡ç½®
 			cont_frames = 0;
 			currentBlink.startFrame = -1;
 			currentBlink.blinkTimeSum = 0;
 		}
 
-		//Ä£ĞÍ·¨²âÊÔ
+		//æ¨¡å‹æ³•æµ‹è¯•
 		//if (!res_left || !res_right) {
 		//	cont_frames++;
 		//	if (currentBlink.startFrame == -1) {
@@ -706,14 +746,14 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		//		}
 		//		recentBlink.push(currentBlink);
 		//	}
-		//	//ÖØÖÃ
+		//	//é‡ç½®
 		//	cont_frames = 0;
 		//	currentBlink.startFrame = -1;
 		//	currentBlink.blinkTimeSum = 0;
 		//}
 
 
-		//½«Êı¾İĞ´ÈëcsvÎÄ¼ş£¬×÷Îª¼ÇÂ¼
+		//å°†æ•°æ®å†™å…¥csvæ–‡ä»¶ï¼Œä½œä¸ºè®°å½•
 		outFile << eye_diameter << ',' << eye_ratio << ',';
 		outFile << ear << ',' << blink_count << ',' << threshold << ',' << maxEAR << ',' << minEAR << ',';
 		outFile << blinkFrequency << ',' << blinkInterval << ',' << blinkLastTime << ',' << perclos << ',';
@@ -748,21 +788,21 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 	}
 	else
 	{
-		//±ãÓÚÏÔÊ¾
+		//ä¾¿äºæ˜¾ç¤º
 		ear = 0;
 	}
 	if (!recentBlink.empty() && frameNumber % 30 == 0) {
-		//ÒªÇó¶ÓÁĞ·Ç¿ÕÇÒÃ¿30Ö¡Ë¢ĞÂÒ»´ÎÊı¾İ
-		//¼ÆËãÕ£ÑÛÆµÂÊ£¬¶ÓÁĞÖĞÕ£ÑÛ´ÎÊı / ×ÜÊ±¼ä£¬ÔÙ°ÑÖ¡Êı»»Ëã³ÉÊ±¼ä1800Ö¡=1min£¬µ¥Î»£º´Î/min
+		//è¦æ±‚é˜Ÿåˆ—éç©ºä¸”æ¯30å¸§åˆ·æ–°ä¸€æ¬¡æ•°æ®
+		//è®¡ç®—çœ¨çœ¼é¢‘ç‡ï¼Œé˜Ÿåˆ—ä¸­çœ¨çœ¼æ¬¡æ•° / æ€»æ—¶é—´ï¼Œå†æŠŠå¸§æ•°æ¢ç®—æˆæ—¶é—´1800å¸§=1minï¼Œå•ä½ï¼šæ¬¡/min
 		blinkFrequency = (float)(recentBlink.size()) * 1800 / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber);
-		//¼ÆËãÕ£ÑÛ¼ä¸ô£¬×ÜÊ±¼ä-Õ£ÑÛÏûºÄµÄÊ±¼ä / ¶ÓÁĞÖĞÕ£ÑÛ´ÎÊı£¬µ¥Î»£ºs/´Î
+		//è®¡ç®—çœ¨çœ¼é—´éš”ï¼Œæ€»æ—¶é—´-çœ¨çœ¼æ¶ˆè€—çš„æ—¶é—´ / é˜Ÿåˆ—ä¸­çœ¨çœ¼æ¬¡æ•°ï¼Œå•ä½ï¼šs/æ¬¡
 		blinkInterval = (float)(TIMESLICE - recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
-		//¼ÆËãÕ£ÑÛ³ÖĞøÊ±¼ä£¬Õ£ÑÛÏûºÄµÄÊ±¼ä / ¶ÓÁĞÖĞÕ£ÑÛ´ÎÊı£¬µ¥Î»£ºs/´Î
+		//è®¡ç®—çœ¨çœ¼æŒç»­æ—¶é—´ï¼Œçœ¨çœ¼æ¶ˆè€—çš„æ—¶é—´ / é˜Ÿåˆ—ä¸­çœ¨çœ¼æ¬¡æ•°ï¼Œå•ä½ï¼šs/æ¬¡
 		blinkLastTime = (float)(recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
-		//¼ÆËãperclos£¬±ÕÑÛ×ÜÊ±¼ä/×ÜÊ±¼ä*100%
+		//è®¡ç®—perclosï¼Œé—­çœ¼æ€»æ—¶é—´/æ€»æ—¶é—´*100%
 		perclos = (float)(recentBlink.back().blinkTimeSum) / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber) * 100;
 
-		//¼ÆËãperclos£¬Í¨¹ıSVM¼ÆËã±ÕÑÛÖ¡Êı/×ÜÖ¡Êı
+		//è®¡ç®—perclosï¼Œé€šè¿‡SVMè®¡ç®—é—­çœ¼å¸§æ•°/æ€»å¸§æ•°
 		float temp = (float)closeSum * 100 / recentSVM.size();
 		perclos = temp > perclos ? temp : perclos;
 	}
@@ -814,13 +854,14 @@ void ATC::ATC_Thread() {
 				GetColorImg(colorImg);
 				detection_success = fhInstance->SetFeature(face_model, parameters, greyImg, colorImg, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
 
-				//»æÖÆÑÛ²¿ÌØÕ÷µã
+				//ç»˜åˆ¶çœ¼éƒ¨ç‰¹å¾ç‚¹
 				if (detection_success) {
-					//»æÖÆÑÛ²¿¾ØĞÎ
+          
+					//ï¿½ï¿½ï¿½ï¿½ï¿½Û²ï¿½ï¿½ï¿½ï¿½ï¿½
 					//cv::rectangle(colorImg, rect, CV_RGB(0, 255, 0));
 					//cv::rectangle(colorImg, cv::boundingRect(rightEyeLmk), CV_RGB(0, 255, 0));
 
-					//Èç¹ûÍ·²¿×ËÌ¬±ä¶¯¹ı´ó¾ÍÏÔÊ¾
+					//ï¿½ï¿½ï¿½Í·ï¿½ï¿½ï¿½ï¿½Ì¬ï¿½ä¶¯ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ê¾
 					if (fhInstance->showBox > 0) {
 						Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
 						fhInstance->showBox--;
@@ -828,19 +869,19 @@ void ATC::ATC_Thread() {
 
 #pragma region paint
 					if (GetKeyState(VK_SPACE)) {
-						//»æÖÆÈ«²¿ÌØÕ÷µã
+						//ç»˜åˆ¶å…¨éƒ¨ç‰¹å¾ç‚¹
 						for (int i = 0; i < 68; i++) {
 							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
 							cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
-						}					
+						}
 
-						////Í·²¿×ËÌ¬ºĞ×Ó
+						////å¤´éƒ¨å§¿æ€ç›’å­
 						//Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
 
-						//»æÖÆÊÓÏß	
+						//ç»˜åˆ¶è§†çº¿	
 						float draw_multiplier = 16;
 						int draw_shiftbits = 4;
-						//»æÖÆÍ«¿×µÄÂÖÀª
+						//ç»˜åˆ¶ç³å­”çš„è½®å»“
 						for (int i = 0; i <= 35; i++) {
 							if (i == 7) {
 								cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
@@ -891,7 +932,7 @@ void ATC::ATC_Thread() {
 					}
 #pragma endregion
 
-					//Í«¿×ÌØÕ÷µã»æÖÆ
+					//ç³å­”ç‰¹å¾ç‚¹ç»˜åˆ¶
 					/*for (int i = 48; i <= 55; i++) {
 					cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
 					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
@@ -901,18 +942,18 @@ void ATC::ATC_Thread() {
 					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
 					}*/
 
-					//ÑÛ¾¦ÂÖÀª
+					//çœ¼ç›è½®å»“
 					/*for (int i = 8; i <= 19; i++) {
-						cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
-						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
 					}
 					for (int i = 36; i <= 47; i++) {
-						cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
-						cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
 					}*/
 				}
 
-				//Ìí¼ÓÎÄ×Ö
+				//æ·»åŠ æ–‡å­—
 				char text[255];
 				sprintf(text, "%.4f", fhInstance->ear);
 				string earStr("EAR:");
@@ -953,7 +994,10 @@ void ATC::ATC_Thread() {
 				sprintf(text, "%.2f", fhInstance->saccade_angle_sum);
 				string saccadeanglesumStr("SACCADEAM:");
 				saccadeanglesumStr += text;
-				//Í·²¿Î»ÖÃ
+				sprintf(text, "%.2f", fhInstance->saccade_dist_sum);
+				string saccadedistsumStr("SACCADEdst:");
+				saccadedistsumStr += text;
+				//å¤´éƒ¨ä½ç½®
 				string headposeStr("HEADPOSE: ");
 				string headposeangleStr("HEADPOSEAG: ");
 				string leftBrackets("(");
@@ -965,7 +1009,7 @@ void ATC::ATC_Thread() {
 				headposeStr += (text + comma);
 				sprintf(text, "%.2f", fhInstance->headpose3D[2]);
 				headposeStr += (text + rightBrackts);
-				//Í·²¿Ğı×ª½Ç¶È
+				//å¤´éƒ¨æ—‹è½¬è§’åº¦
 				sprintf(text, "%.2f", fhInstance->headpose3D[3]);
 				headposeangleStr += (leftBrackets + text + comma);
 				sprintf(text, "%.2f", fhInstance->headpose3D[4]);
@@ -973,10 +1017,10 @@ void ATC::ATC_Thread() {
 				sprintf(text, "%.2f", fhInstance->headpose3D[5]);
 				headposeangleStr += (text + rightBrackts);
 
-				//Õ£ÑÛ
+				//çœ¨çœ¼
 				cv::putText(colorImg, blinkStr, cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, earStr, cv::Point(20, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				//Õ£ÑÛÍ³¼Æ
+				//Õ£ï¿½ï¿½Í³ï¿½ï¿½
 				if (fhInstance->blinkFrequency < FREQ_THRESH)
 					cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				else
@@ -996,11 +1040,12 @@ void ATC::ATC_Thread() {
 					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				else
 					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
-				//Í«¿×
+				//Í«ï¿½ï¿½
+        
 				cv::putText(colorImg, diaStr, cv::Point(20, 180), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, ratStr, cv::Point(20, 200), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 
-				//ÌØÊâ¶¯×÷
+				//ç‰¹æ®ŠåŠ¨ä½œ
 				string browStr("brow: ");
 				string lipStr("lip: ");
 				string jawStr("jaw: ");
@@ -1018,13 +1063,13 @@ void ATC::ATC_Thread() {
 							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
 						}
 						break;
-					/*case 10:
+						/*case 10:
 						lipStr = lipStr + (lip ? " & upper lip raiser" : "upper lip raiser");
 						lip = true;
 						break;*/
 					case 12:
 						lipStr = lipStr + (lip ? " & lip corner puller" : "lip corner puller");
-						lip = true;						
+						lip = true;
 						cv::circle(colorImg, temp1, 2, cv::Scalar(0, 255, 0), -1);
 						//cv::circle(colorImg, temp2, 2, cv::Scalar(0, 255, 0), -1);
 						for (int i = 54; i <= 59; i++) {
@@ -1032,11 +1077,11 @@ void ATC::ATC_Thread() {
 							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
 						}
 						break;
-					/*case 14:
+						/*case 14:
 						lipStr = lipStr + (lip ? " & dimpler" : "dimpler");
 						lip = true;
 						break;*/
-					/*case 20:
+						/*case 20:
 						lipStr = lipStr + (lip ? " & lip strethed" : "lip strethed");
 						lip = true;
 						break;*/
@@ -1060,7 +1105,7 @@ void ATC::ATC_Thread() {
 						break;
 					}
 				}
-				if(brow)
+				if (brow)
 					cv::putText(colorImg, browStr, cv::Point(20, 240), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				else {
 					browStr += "normal";
@@ -1081,27 +1126,29 @@ void ATC::ATC_Thread() {
 					cv::putText(colorImg, jawStr, cv::Point(20, 280), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				}
 
-				//×¢ÊÓ
+				//æ³¨è§†
 				cv::putText(colorImg, gazecountStr, cv::Point(450, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, gazetimeStr, cv::Point(450, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, saccadeanglesumStr, cv::Point(450, 60), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				//AU
-				/*for (int i = 0; i < fhInstance->au_class.size(); ++i) {
-					sprintf(text, "%.0f", fhInstance->au_class[i].second);
+        cv::putText(colorImg, saccadedistsumStr, cv::Point(450, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+
+				for (int i = 0; i < fhInstance->au_class.size(); ++i) {
+					sprintf(text, "%.3f", fhInstance->au_class[i].second);
 					string auStr(fhInstance->au_class[i].first + ": ");
 					auStr += text;
-					cv::putText(colorImg, auStr, cv::Point(530, 80 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				}*/
-				for (int i = 0; i < fhInstance->au_reg.size(); ++i) {
-					sprintf(text, "%.3f", fhInstance->au_reg[i].second);
-					string auStr(fhInstance->au_reg[i].first + ": ");
-					auStr += text;
-					cv::putText(colorImg, auStr, cv::Point(500, 80 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				}
-				//Í·²¿×ËÌ¬
-				cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, headposeangleStr, cv::Point(20, 460), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+					cv::putText(colorImg, auStr, cv::Point(500, 100 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 
+				}
+				//Í·ï¿½ï¿½ï¿½ï¿½Ì¬
+				if (fhInstance->headpose3D[2]>HEADPOSE_THRESH)
+					cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (abs(fhInstance->headpose3D[4])<HEADPOSEANGLE_THRESH)
+					cv::putText(colorImg, headposeangleStr, cv::Point(20, 460), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, headposeangleStr, cv::Point(20, 460), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
 
 				writer << colorImg;
 				cv::imshow("test", colorImg);
@@ -1241,11 +1288,11 @@ ofstream outFile;
 int main(int argc, char **argv)
 {
 	/*for (int i = 0; i < argc; i++) {
-		cout <<i<<" "<< argv[i] << endl;
+	cout <<i<<" "<< argv[i] << endl;
 	}*/
 	ATC* a = ATC::GetInstance(argv[0], true);
 	//a->StartThread("F:\\Project\\ATC\\ATC\\x64\\Release\\YDXJ0004_converter.wmv");
-	//a->StartThread("E:\\LYC\\ÎÄ¼ş\\´óÑ§\\Ñ§Ï°\\ÊµÑéÊÒ\\Â½·å\\ÈËÁ³Ê¶±ğ_¿Õ¹Ü\\07_12¿Õ¹ÜÊµÑéÊı¾İ²É¼¯\\¼ô¼­_lyc\\¹ÜÖÆ2ÉãÏñÍ·²É¼¯\\2_1.mp4");
+	//a->StartThread("E:\\LYC\\æ–‡ä»¶\\å¤§å­¦\\å­¦ä¹ \\å®éªŒå®¤\\é™†å³°\\äººè„¸è¯†åˆ«_ç©ºç®¡\\07_12ç©ºç®¡å®éªŒæ•°æ®é‡‡é›†\\å‰ªè¾‘_lyc\\ç®¡åˆ¶2æ‘„åƒå¤´é‡‡é›†\\2_1.mp4");
 	//a->StartThread("2_1.mp4");
 	//a->StartThread(0, "test.avi");
 	a->StartThread(0);
