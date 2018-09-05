@@ -14,10 +14,10 @@
 //#define EAR_THRESH 0.28
 #define EYE_FRAME_MIN 2
 #define EYE_FRAME_MAX 8
-//timesliceʱ��Ƭ ֡�� һ��30֡
+//timeslice 时间片 帧数 一秒30帧
 #define TIMESLICE 900
 
-//��ֵ
+//threshold
 #define FREQ_THRESH 30
 #define INTER_THRESH 5
 #define LAST_THRESH 1
@@ -258,7 +258,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			isInit = true;
 		}
 
-		//�ж����⶯��
+		//part of special action 
 		actions.clear();
 		for (int i = 0; i < au_reg.size(); ++i) {
 			//cout << au_reg[i].first << " " << au_reg[i].second << endl;
@@ -444,8 +444,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		float res_right = 1;
 
 
-		//ʹ��ģ��
-		//����
+		//left eye
 		try {
 			cv::Mat eye_rect_left = colorImg(rect_left);
 			cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
@@ -856,12 +855,12 @@ void ATC::ATC_Thread() {
 
 				//绘制眼部特征点
 				if (detection_success) {
-          
-					//�����۲�����
+
+					//绘制眼部矩形
 					//cv::rectangle(colorImg, rect, CV_RGB(0, 255, 0));
 					//cv::rectangle(colorImg, cv::boundingRect(rightEyeLmk), CV_RGB(0, 255, 0));
 
-					//���ͷ����̬�䶯������ʾ
+					//头部姿态过大时显示
 					if (fhInstance->showBox > 0) {
 						Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
 						fhInstance->showBox--;
@@ -1020,7 +1019,7 @@ void ATC::ATC_Thread() {
 				//眨眼
 				cv::putText(colorImg, blinkStr, cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, earStr, cv::Point(20, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				//գ��ͳ��
+				//blink parameter threshold detection
 				if (fhInstance->blinkFrequency < FREQ_THRESH)
 					cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				else
@@ -1040,8 +1039,8 @@ void ATC::ATC_Thread() {
 					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				else
 					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
-				//ͫ��
-        
+				//ͫpupil diameter parameter
+
 				cv::putText(colorImg, diaStr, cv::Point(20, 180), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, ratStr, cv::Point(20, 200), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 
@@ -1139,7 +1138,7 @@ void ATC::ATC_Thread() {
 					cv::putText(colorImg, auStr, cv::Point(500, 100 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 
 				}
-				//ͷ����̬
+				//heapose threshold detection
 				if (fhInstance->headpose3D[2]>HEADPOSE_THRESH)
 					cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				else
