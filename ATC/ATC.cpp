@@ -9,6 +9,21 @@
 #include "GazeEstimation.h"
 #include <iostream>
 #include <fstream>
+
+
+//#define EAR_THRESH 0.28
+#define EYE_FRAME_MIN 2
+#define EYE_FRAME_MAX 8
+//timesliceʱ��Ƭ ֡�� һ��30֡
+#define TIMESLICE 900
+
+//��ֵ
+#define FREQ_THRESH 30
+#define INTER_THRESH 5
+#define LAST_THRESH 1
+#define PERCLOS_THRESH 30
+#define HEADPOSE_THRESH 450
+#define	HEADPOSEANGLE_THRESH 0.3
 ImgData* ImgData::instance = nullptr;
 ImgData* ATC::imgDataInstance = nullptr;
 //PeopleFeature* PeopleFeature::instance = nullptr;
@@ -93,11 +108,6 @@ bool ImgData::Open(const std::string & fileName) {
 
 #pragma region FeatureHouse
 
-//#define EAR_THRESH 0.28
-#define EYE_FRAME_MIN 2
-#define EYE_FRAME_MAX 8
-//timeslice时间片 帧数 一秒30帧
-#define TIMESLICE 900
 float FeatureHouse::GetDistance(int i, int j)
 {
 	return sqrt(pow(landmark2D[2 * i] - landmark2D[2 * j], 2) + pow(landmark2D[2 * i + 1] - landmark2D[2 * j + 1], 2));
@@ -196,8 +206,10 @@ FeatureHouse::FeatureHouse() {
 	outFile.open("test.csv", ios::out);
 	outFile << "eye_diameter" << ',' << "eye_ratio" << ',';
 	outFile << "ear" << ',' << "blink" << ',' << "threshold" << ',' << "maxEar" << ',' << "minEar" << ',';
+	outFile << "b_freq" << ',' << "b_interval" << ',' << "b_last" << ',' << "perclos" << ',';
 	//outFile << "res_left" << ',' << "res_right" << ',';
 	outFile << "gaze_0_x" << ',' << "gaze_0_y" << ',' << "gaze_0_z" << ',' << "gaze_1_x" << ',' << "gaze_1_y" << ',' << "gaze_1_z" << ',' << " gaze_angle_x" << ',' << " gaze_angle_y" << ',';
+	outFile << "gaze_count" << ',' << "gaze_time" << ',' << "saccade_angle_sum" << ',';
 	for (int i = 0; i < 56; i++) {
 		outFile << " eye_lmk_x_" << i << ',' << "eye_lmk_y_" << i << ',';
 	}
@@ -211,7 +223,6 @@ FeatureHouse::FeatureHouse() {
 		outFile << "X_" << i << ',' << "Y_" << i << ',' << "Z_" << i << ',';
 	}
 	outFile << "pose_Tx" << ',' << "pose_Ty" << ',' << "pose_Tz" << ',' << "pose_Rx" << ',' << "pose_Ry" << ',' << "pose_Rz" << ',';
-	outFile << endl;
 }
 
 bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy) {
@@ -235,8 +246,19 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		au_reg = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsReg();
 		au_class = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsClass();
 
-		
-		//判断特殊动作
+
+		if (!isInit) {
+			for (int i = 0; i < au_reg.size(); i++) {
+				outFile << au_reg[i].first << "_r" << ',';
+			}
+			for (int i = 0; i < au_class.size(); i++) {
+				outFile << au_class[i].first << "_c" << ',';
+			}
+			outFile << endl;
+			isInit = true;
+		}
+
+		//�ж����⶯��
 		actions.clear();
 		for (int i = 0; i < au_reg.size(); ++i) {
 			//cout << au_reg[i].first << " " << au_reg[i].second << endl;
@@ -265,7 +287,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 			}
 		}
 		/*for (auto au : actions) {
-			cout << au << " ";
+		cout << au << " ";
 		}
 		cout << endl;*/
 
@@ -421,8 +443,9 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		float res_left = 1;
 		float res_right = 1;
 
-		//使用模型
-		//左眼
+
+		//ʹ��ģ��
+		//����
 		try {
 			cv::Mat eye_rect_left = colorImg(rect_left);
 			cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
@@ -455,6 +478,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		catch (...) {
 			left_eye_sign = false;
 		}
+
 
 
 		//右眼
@@ -511,6 +535,7 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 
 		//头部转变角度之和
 		float eu_sum = 0;
+		headpose_change = false;
 		if (init_head) {
 			for (int i = 3; i <= 5; i++)
 				eu_sum += abs(former_headpose3D[i] - headpose3D[i]);
@@ -522,11 +547,22 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 				currentBlink.blinkTimeSum = 0;
 			}
 
-			//cout << eu_sum << " ";
-			/*for (int i = 0; i < 6; i++) {
-			cout << headpose3D[i] << " ";
+			if (eu_sum > 0.05) {
+				headpose_change = true;
+				showBox = 15;
 			}
-			cout << endl;*/
+
+			/*
+			//ͷ������ı�
+			eu_sum = 0;
+			for (int i = 0; i <= 2; i++)
+			eu_sum += abs(former_headpose3D[i] - headpose3D[i]);*/
+
+			//cout << eu_sum << " ";
+			for (int i = 0; i < 6; i++) {
+				cout << headpose3D[i] << " ";
+			}
+			cout << endl;
 		}
 
 		std::copy(headpose3D, headpose3D + 6, former_headpose3D);
@@ -720,11 +756,13 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		//将数据写入csv文件，作为记录
 		outFile << eye_diameter << ',' << eye_ratio << ',';
 		outFile << ear << ',' << blink_count << ',' << threshold << ',' << maxEAR << ',' << minEAR << ',';
+		outFile << blinkFrequency << ',' << blinkInterval << ',' << blinkLastTime << ',' << perclos << ',';
 		//outFile << res_left << ',' << res_right << ',';
 		for (int i = 0; i < 6; i++) {
 			outFile << gazeVector[i] << ',';
 		}
 		outFile << gaze_angle_x << ',' << gaze_angle_y << ',';
+		outFile << gaze_count << ',' << gaze_time << ',' << saccade_angle_sum << ',';
 		for (int i = 0; i < 56; i++) {
 			outFile << eye_Landmark2D[i * 2] << ',' << eye_Landmark2D[i * 2 + 1] << ',';
 		}
@@ -739,6 +777,12 @@ bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyI
 		}
 		for (int i = 0; i < 6; i++) {
 			outFile << headpose3D[i] << ',';
+		}
+		for (int i = 0; i < au_reg.size(); i++) {
+			outFile << au_reg[i].second << ',';
+		}
+		for (int i = 0; i < au_class.size(); i++) {
+			outFile << au_class[i].second << ',';
 		}
 		outFile << endl;
 	}
@@ -812,21 +856,16 @@ void ATC::ATC_Thread() {
 
 				//绘制眼部特征点
 				if (detection_success) {
-					//保存学习所用数据
-					//cv::imshow("eye", eye_gray);
-					//if (fhInstance->ear < fhInstance->threshold) {
-					//	close++;
-					//	filePath = "./data/close/img_" + to_string(close) + ".jpg";
-					//}
-					//else {
-					//	open++;
-					//	filePath = "./data/open/img_" + to_string(open) + ".jpg";
-					//}
-					//cv::imwrite(filePath, eye_gray);
-
-					//绘制眼部矩形
+          
+					//�����۲�����
 					//cv::rectangle(colorImg, rect, CV_RGB(0, 255, 0));
 					//cv::rectangle(colorImg, cv::boundingRect(rightEyeLmk), CV_RGB(0, 255, 0));
+
+					//���ͷ����̬�䶯������ʾ
+					if (fhInstance->showBox > 0) {
+						Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+						fhInstance->showBox--;
+					}
 
 #pragma region paint
 					if (GetKeyState(VK_SPACE)) {
@@ -834,7 +873,7 @@ void ATC::ATC_Thread() {
 						for (int i = 0; i < 68; i++) {
 							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
 							cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
-						}					
+						}
 
 						////头部姿态盒子
 						//Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
@@ -981,12 +1020,28 @@ void ATC::ATC_Thread() {
 				//眨眼
 				cv::putText(colorImg, blinkStr, cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, earStr, cv::Point(20, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				//眨眼统计
-				cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, interStr, cv::Point(20, 100), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, lastStr, cv::Point(20, 120), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				//瞳孔
+				//գ��ͳ��
+				if (fhInstance->blinkFrequency < FREQ_THRESH)
+					cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (fhInstance->blinkInterval < INTER_THRESH)
+					cv::putText(colorImg, interStr, cv::Point(20, 100), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, interStr, cv::Point(20, 100), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (fhInstance->blinkLastTime < LAST_THRESH)
+					cv::putText(colorImg, lastStr, cv::Point(20, 120), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, lastStr, cv::Point(20, 120), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (fhInstance->perclos < PERCLOS_THRESH)
+					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+				//ͫ��
+        
 				cv::putText(colorImg, diaStr, cv::Point(20, 180), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, ratStr, cv::Point(20, 200), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 
@@ -1008,13 +1063,13 @@ void ATC::ATC_Thread() {
 							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
 						}
 						break;
-					/*case 10:
+						/*case 10:
 						lipStr = lipStr + (lip ? " & upper lip raiser" : "upper lip raiser");
 						lip = true;
 						break;*/
 					case 12:
 						lipStr = lipStr + (lip ? " & lip corner puller" : "lip corner puller");
-						lip = true;						
+						lip = true;
 						cv::circle(colorImg, temp1, 2, cv::Scalar(0, 255, 0), -1);
 						//cv::circle(colorImg, temp2, 2, cv::Scalar(0, 255, 0), -1);
 						for (int i = 54; i <= 59; i++) {
@@ -1022,11 +1077,11 @@ void ATC::ATC_Thread() {
 							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
 						}
 						break;
-					/*case 14:
+						/*case 14:
 						lipStr = lipStr + (lip ? " & dimpler" : "dimpler");
 						lip = true;
 						break;*/
-					/*case 20:
+						/*case 20:
 						lipStr = lipStr + (lip ? " & lip strethed" : "lip strethed");
 						lip = true;
 						break;*/
@@ -1050,7 +1105,7 @@ void ATC::ATC_Thread() {
 						break;
 					}
 				}
-				if(brow)
+				if (brow)
 					cv::putText(colorImg, browStr, cv::Point(20, 240), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				else {
 					browStr += "normal";
@@ -1075,19 +1130,25 @@ void ATC::ATC_Thread() {
 				cv::putText(colorImg, gazecountStr, cv::Point(450, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, gazetimeStr, cv::Point(450, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, saccadeanglesumStr, cv::Point(450, 60), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-      
-				cv::putText(colorImg, saccadedistsumStr, cv::Point(450, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+        cv::putText(colorImg, saccadedistsumStr, cv::Point(450, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+
 				for (int i = 0; i < fhInstance->au_class.size(); ++i) {
-					sprintf(text, "%.0f", fhInstance->au_class[i].second);
+					sprintf(text, "%.3f", fhInstance->au_class[i].second);
 					string auStr(fhInstance->au_class[i].first + ": ");
 					auStr += text;
 					cv::putText(colorImg, auStr, cv::Point(500, 100 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 
 				}
-				//头部姿态
-				cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-				cv::putText(colorImg, headposeangleStr, cv::Point(20, 460), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				//ͷ����̬
+				if (fhInstance->headpose3D[2]>HEADPOSE_THRESH)
+					cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
 
+				if (abs(fhInstance->headpose3D[4])<HEADPOSEANGLE_THRESH)
+					cv::putText(colorImg, headposeangleStr, cv::Point(20, 460), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, headposeangleStr, cv::Point(20, 460), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
 
 				writer << colorImg;
 				cv::imshow("test", colorImg);

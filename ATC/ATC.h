@@ -77,6 +77,9 @@ protected:
 	float former_headpose3D[6];
 	//头部姿态初始化标志
 	bool init_head = false;
+	//头部姿态变化标志
+	bool headpose_change = false;
+	int showBox;
 	//headpose
 	cv::Vec6d pose_estimate;
 	//x_left,y_left ,z_left ; x_right,y_right,z_right
@@ -118,6 +121,9 @@ protected:
 
 	//csv writer
 	std::ofstream outFile;
+	//csv initial sign
+	bool isInit = false;
+
 	//frame number
 	unsigned int frameNumber;
 	//检测成功的帧数
