@@ -1130,7 +1130,7 @@ void ATC::ATC_Thread() {
 				cv::putText(colorImg, gazecountStr, cv::Point(450, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, gazetimeStr, cv::Point(450, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 				cv::putText(colorImg, saccadeanglesumStr, cv::Point(450, 60), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
-        cv::putText(colorImg, saccadedistsumStr, cv::Point(450, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, saccadedistsumStr, cv::Point(450, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
 
 				for (int i = 0; i < fhInstance->au_class.size(); ++i) {
 					sprintf(text, "%.3f", fhInstance->au_class[i].second);

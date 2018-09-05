@@ -1,324 +1,1302 @@
-#pragma once
-#include <thread>
-#include <mutex>
+﻿#define _SCL_SECURE_NO_WARNINGS
+#include "ATC.h"
+#include <chrono>
+#include "LandmarkCoreIncludes.h"
+#include <Visualizer.h>
+#include <VisualizationUtils.h>
+#include <RotationHelpers.h>
+#include "FaceAnalyser.h"
+#include "GazeEstimation.h"
 #include <iostream>
-#include <atomic>
-#include <opencv2/opencv.hpp>
-#include "svm.h"
 #include <fstream>
-#include <queue>
 
-const unsigned int INIT_WIDTH(640), INIT_HEIGHT(480);
-const float INIT_FX(500.0f), INIT_FY(500.0f), INIT_CX(INIT_WIDTH / 2), INIT_CY(INIT_HEIGHT / 2);
-const unsigned int INIT_FPS(30);
 
-//only store color/grey images
-class ImgData {
-	friend class ATC;
-protected:
-	static ImgData* instance;
-	cv::Mat colorImg;
-	cv::Mat greyImg;
-	cv::VideoCapture videoCapture;
-	std::mutex outputMutex;
-	bool isValid;
-	//write video to disk
-	cv::VideoWriter colorWriter;
-	unsigned int width;
-	unsigned int height;
-	float fx, fy, cx, cy;
-	unsigned int fps;
-	std::string outputFileName;
-	//functions
+//#define EAR_THRESH 0.28
+#define EYE_FRAME_MIN 2
+#define EYE_FRAME_MAX 8
+//timesliceʱ��Ƭ ֡�� һ��30֡
+#define TIMESLICE 900
 
-	static ImgData* GetInstance() {
-		if (instance == nullptr) {
-			instance = new ImgData();
-			instance->SetCameraParam();
-		}
-		return instance;
+//��ֵ
+#define FREQ_THRESH 30
+#define INTER_THRESH 5
+#define LAST_THRESH 1
+#define PERCLOS_THRESH 30
+#define HEADPOSE_THRESH 450
+#define	HEADPOSEANGLE_THRESH 0.3
+ImgData* ImgData::instance = nullptr;
+ImgData* ATC::imgDataInstance = nullptr;
+//PeopleFeature* PeopleFeature::instance = nullptr;
+FeatureHouse* FeatureHouse::instance = nullptr;
+ATC* ATC::instance = nullptr;
+FeatureHouse* ATC::fhInstance = nullptr;
+using std::cout;
+using std::endl;
+
+#pragma region ImgDataDefine
+inline bool ImgData::GetColorImg(cv::Mat &c) {
+	if (!isValid)
+		return false;
+	std::lock_guard<std::mutex> lm(outputMutex);
+	c = colorImg.clone();
+	return true;
+}
+
+inline bool ImgData::GetGreyImg(cv::Mat &g) {
+	if (!isValid)
+		return false;
+	g = greyImg;
+	return true;
+}
+
+bool ImgData::SetImg() {
+	if (!videoCapture.isOpened()) {
+		std::cout << "what??" << std::endl;
+		throw std::exception("camera | video cann't open!");
 	}
-	bool SetImg();
-	inline bool GetColorImg(cv::Mat &c);
-	inline bool GetGreyImg(cv::Mat &g);
-	bool Open(int index);
-	bool Open(int index, const std::string & fileName);
-	bool Open(const std::string & fileName);
-	bool IsValid() {
-		return isValid;
+	cv::Mat temp;
+	if (!videoCapture.read(temp))
+	{
+		return isValid = false;
 	}
-	//TODO : dynamic change camera parameters
-	void SetCameraParam(bool isDefault = true) {
-		if (isDefault) {
-			width = INIT_WIDTH;
-			height = INIT_HEIGHT;
-			fx = INIT_FX;
-			fy = INIT_FY;
-			cx = INIT_CX;
-			cy = INIT_CY;
-			fps = INIT_FPS;
-			outputFileName = "";
-		}
+	cv::cvtColor(temp, greyImg, CV_BGR2GRAY);
+	if (outputFileName != "") {
+		colorWriter << temp;
 	}
-	//int GetCameraParam();
-};
+	std::lock_guard<std::mutex> lm(outputMutex);
+	colorImg = temp;
+	return true;
+}
 
-#pragma region TODO
+bool ImgData::Open(int index) {
+	isValid = videoCapture.open(index);
+	SetCameraParam();
+	isValid &= videoCapture.set(CV_CAP_PROP_FRAME_WIDTH, width);
+	isValid &= videoCapture.set(CV_CAP_PROP_FRAME_HEIGHT, height);
+	isValid &= videoCapture.set(CV_CAP_PROP_FPS, fps);
+	outputFileName = "";
+	return isValid;
+}
 
-//store all feature
-class FeatureHouse
+bool ImgData::Open(int index, const std::string & fileName) {
+	Open(index);
+	outputFileName = fileName;
+	try {
+		isValid = colorWriter.open(fileName, CV_FOURCC('M', 'P', '4', '2'), fps, cv::Size(width, height));
+	}
+	catch (...) {
+		isValid = false;
+	}
+	return isValid;
+}
+
+bool ImgData::Open(const std::string & fileName) {
+	outputFileName = "";
+	isValid = videoCapture.open(fileName);
+	if (isValid) {
+		width = videoCapture.get(CV_CAP_PROP_FRAME_WIDTH);
+		height = videoCapture.get(CV_CAP_PROP_FRAME_HEIGHT);
+		fps = videoCapture.get(CV_CAP_PROP_FPS);
+		fx = 500.0f*width / 640.0f;
+		fy = 500.0f*height / 320.0f;
+		cx = width / 2;
+		cy = height / 2;
+	}
+	return isValid;
+}
+#pragma endregion
+
+#pragma region FeatureHouse
+
+float FeatureHouse::GetDistance(int i, int j)
 {
-	friend class ATC;
-protected:
-	static FeatureHouse* instance;
-	double confidence;
-	//x,y,z,euler_x,euler_y,euler_z
-	float headpose3D[6];
-	float former_headpose3D[6];
-	//ͷ����̬��ʼ����־
-	bool init_head = false;
-	//ͷ����̬�仯��־
-	bool headpose_change = false;
-	int showBox;
-	//headpose
-	cv::Vec6d pose_estimate;
-	//x_left,y_left ,z_left ; x_right,y_right,z_right
-	float pupilCenter3D[6];
-	//x1,y1,x2,y2.....x68,y68
-	float landmark2D[68 * 2];
-	//X1,Y1,Z1,X2...X68,Y68,Z68
-	float landmark3D[68 * 3];
-	//gaze : x,y,z_left ; x,y,z_right 
-	float gazeVector[6];
-	//gaze_angle_x,y
-	float gaze_angle_x;
-	float gaze_angle_y;
-	//eyelandmark
-	float eye_Landmark2D[56 * 2];
-	float eye_Landmark3D[56 * 3];
+	return sqrt(pow(landmark2D[2 * i] - landmark2D[2 * j], 2) + pow(landmark2D[2 * i + 1] - landmark2D[2 * j + 1], 2));
+}
 
-	//��������ģ��
-	void *face_analysis_params;
-	void *face_analyser;
-	std::vector<std::pair<std::string, double>> au_reg;
-	std::vector<std::pair<std::string, double>> au_class;	
-
-	//�洢�����˵Ķ������
-	std::vector<int> actions;
-
-	//ͫ��ֱ��
-	float eye_diameter;
-	//ͫ�׺ͺ�Ĥ�ı�ֵ
-	float eye_ratio;
-
-	//SVM������
-	cv::Ptr<cv::ml::SVM> svm1;
-	svm_model* model_L;
-	svm_model* model_R;
-
-	//Random Forest
-	//cv::Ptr<cv::ml::RTrees> rtree;
-
-	//csv writer
-	std::ofstream outFile;
-	//csv initial sign
-	bool isInit = false;
-
-	//frame number
-	unsigned int frameNumber;
-	//���ɹ���֡��
-	unsigned int effFrameNumber;
-	//ear: the ratio of the eyes' width and height
-	float ear = 0;
-	//ear��ֵ
-	float threshold;
-	//blink times
-	unsigned int blink_count;
-	//number of continuous frames in which ear is less than the THRESH
-	unsigned int cont_frames;
-	//number of continuous frames in which both of the predictions are 0
-	unsigned int cont_frames_mod;
-	//ear�����ֵ����Сֵ����ʼ��
-	float maxEAR = -1;
-	float minEAR = 10;
-	//����ˢ��ear�����ֵ����Сֵ
-	float tempMaxEAR = -1;
-	float tempMinEAR = 10;
-
-	//used to record the recent blink
-	typedef struct blink {
-		int startFrame = -1;		//գ�ۿ�ʼ֡��
-		int endFrame = -1;		//գ�۽���֡��
-		unsigned int blinkTimeSum = 0;		//���գ���Լ�֮ǰ��գ�۵ĳ���ʱ��֮�ͣ����ڼ��㣩
-											//unsigned int interval = 0;		//���գ�����ϴε�գ�۵ļ��ʱ��
-	}blink;
-	//���ڼ�¼��ǰգ�۵�״̬���������
-	blink currentBlink;
-	std::queue<blink> recentBlink;
-	float blinkFrequency = 0;
-	float blinkInterval = 0;
-	float blinkLastTime = 0;
-
-	//��¼���ÿ֡��svm�����true�������ۣ����ڼ���perclos�ı���֡��
-	std::queue<bool> recentSVM;
-	//���۵���ֵ֮�ͣ�����perclos����
-	int closeSum = 0;
-	//perclos�����۵�֡��/��֡��
-	float perclos = 0;
-
-	/*
-	//Ȩ�ط���
-	//���ַ����Ŀ�ʼ֡��
-	int startFrame_mod = -1;
-	int startFrame_ear = -1;
-	//��־λ
-	bool isBlinking = false;*/
-
-
-#pragma region ע��ɨ�ӿ�
-	float gazeLastvector[6] = { 100,100,100,100,100,100 };
-	float gaze_last_angle_x = 0;
-	float gaze_last_angle_y = 0;
-	//ע����֡��
-	float gaze_frame_sum;
-	float gaze_time;
-	//gaze event
-	unsigned int gaze_count;
-	////number of continuous frames in gaze occurance
-	unsigned int gaze_frames;
-	//used to record the recent gaze
-	typedef struct gaze {
-		int startFrame = -1;
-		int endFrame = -1;
-		unsigned int gazeTimesum = 0;
-		unsigned int interval = 0;
-	}gaze;
-	gaze currentGaze;
-	//ɨ�ӽǶ�
-	float saccade_angle_sum;
-	//ɨ�Ӿ���
-	float saccade_dist_sum;
-	//gaze point at screen
-	float planeVector[3] = { 0,0,1 };
-	float planePoint[3] = { -1,0,0 };
-	float gazePoint[3];
-	float gazeLastpoint[3] = { 0,0,0 };
-	//����ɨ�ӵ�
-	void GazePoint(cv::Mat1f tempMat);
-#pragma endregion
-
-#pragma region tired detection
-
-
-#pragma endregion
-
-	std::mutex output;
-	//functions
-
-	FeatureHouse();
-	//calculate the distance of two landmarks in 2D
-	float GetDistance(int i, int j);
-
-	//calculate the distance of two landmarks in 3D
-	float GetDistance3D(int i, int j);
-
-	//calculate the distance of two gazePoint in 3D
-	float GetDistance3D(float gazePoint[], float gazeLastpoint[]);
-
-	//calculate the ear
-	float EyeAspectRatio(float a, float b, float c);
-
-	//calculate the distance of two eyelandmarks in 2D
-	float GetEyeDistance(int i, int j);
-
-	//calculate the distance of two eyelandmarks in 3D
-	float GetEyeDistance3D(int i, int j);
-
-	//�Ծ�������Ϊ���ķŴ�size��С
-	cv::Rect RectCenterScale(cv::Rect rect, cv::Size size);
-
-	//2֡�����߷���н�
-	float GazeCosinDiff(float *gazeaverageLastvector, float *averageGaze);
-
-	//SetFeatures with mutex
-	bool SetFeature(void* face_model, void* parameters, cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy);
-	static FeatureHouse* GetInstance() {
-		if (instance == nullptr) {
-			instance = new FeatureHouse();
-		}
-		return instance;
-	}
-
-	//get landmark with mutex
-	void GetLandmark2d(float landmark2d[68 * 2]);
-
-	//get pupilCenter with mutex
-	void GetPupilCenter3d(float pupilCenter3d[6]);
-
-	//get gaze vector with mutex
-	void GetGazeVector(float gaze[6]);
-
-	//get headpose with mutex
-	void GetHeadPose(float headpose[6]);
-};
-#pragma endregion
-
-//ATC for Qt-GUI
-class ATC
+float FeatureHouse::GetDistance3D(int i, int j)
 {
-protected:
-	ATC() :threadContinue(true), t(nullptr), detection_success(false) {};
-	static ATC* instance;
-	static ImgData* imgDataInstance;
-	static FeatureHouse* fhInstance;
-	void ATC_Thread();
-	std::thread* t;
-	void *parameters;
-	void *face_model;
-	bool OpenFaceInit(const std::string & exePath);
-	std::atomic<bool> threadContinue;
-	std::atomic<bool> useOpenFace;
-	std::atomic<bool> detection_success;
-public:
-	~ATC();
-	static ATC* GetInstance(const std::string & exePath, bool useOpenFace = false) {
-		if (instance == nullptr) {
-			instance = new ATC();
-			imgDataInstance = ImgData::GetInstance();
-			fhInstance = FeatureHouse::GetInstance();
-			instance->useOpenFace = useOpenFace;
-			instance->parameters = nullptr;
-			instance->face_model = nullptr;
-			instance->OpenFaceInit(exePath);
-		}
-		return instance;
+	return sqrt(pow(landmark3D[3 * i] - landmark3D[3 * j], 2) + pow(landmark3D[3 * i + 1] - landmark3D[3 * j + 1], 2) + pow(landmark3D[3 * i + 2] - landmark3D[3 * j + 2], 2));
+}
+
+float FeatureHouse::GetDistance3D(float gazePoint[], float gazeLastpoint[])
+{
+
+	return sqrt(pow((gazePoint[0] - gazeLastpoint[0]), 2) + pow((gazePoint[1] - gazeLastpoint[1]), 2) + pow((gazePoint[2] - gazeLastpoint[2]), 2));
+}
+
+float FeatureHouse::EyeAspectRatio(float a, float b, float c)
+{
+	return (a + b) / (2 * c);
+}
+
+float FeatureHouse::GetEyeDistance(int i, int j)
+{
+	return sqrt(pow(eye_Landmark2D[2 * i] - eye_Landmark2D[2 * j], 2) + pow(eye_Landmark2D[2 * i + 1] - eye_Landmark2D[2 * j + 1], 2));
+}
+
+float FeatureHouse::GetEyeDistance3D(int i, int j)
+{
+	return sqrt(pow(eye_Landmark3D[3 * i] - eye_Landmark3D[3 * j], 2) + pow(eye_Landmark3D[3 * i + 1] - eye_Landmark3D[3 * j + 1], 2) + pow(eye_Landmark3D[3 * i + 2] - eye_Landmark3D[3 * j + 2], 2));
+}
+
+cv::Rect FeatureHouse::RectCenterScale(cv::Rect rect, cv::Size size) {
+	rect = rect + size;
+	cv::Point pt;
+	pt.x = cvRound(size.width / 2.0);
+	pt.y = cvRound(size.height / 2.0);
+	return (rect - pt);
+}
+float FeatureHouse::GazeCosinDiff(float * gazeLastvector, float * gazeVector)
+{
+	float a, b, c, d;
+	float gazeaverageLastvector[3];
+	float averageGaze[3];
+
+	gazeaverageLastvector[0] = gazeLastvector[0];
+	gazeaverageLastvector[1] = gazeLastvector[1];
+	gazeaverageLastvector[2] = gazeLastvector[2];
+
+
+	averageGaze[0] = gazeVector[0];
+	averageGaze[1] = gazeVector[1];
+	averageGaze[2] = gazeVector[2];
+
+	a = sqrt(pow(gazeaverageLastvector[0], 2) + pow(gazeaverageLastvector[1], 2) + pow(gazeaverageLastvector[2], 2));
+	b = sqrt(pow(averageGaze[0], 2) + pow(averageGaze[1], 2) + pow(averageGaze[2], 2));
+	c = gazeaverageLastvector[0] * averageGaze[0] + gazeaverageLastvector[1] * averageGaze[1] + gazeaverageLastvector[2] * averageGaze[2];
+	d = acos(c / (a*b));
+	return d;
+}
+
+void FeatureHouse::GazePoint(cv::Mat1f face)
+{
+	float parameTerflag;
+	float parameTer;
+	float eyeballCenter[3];
+	cv::Mat offset = (cv::Mat_<float>(3, 1) << 0, -3.5, 7.0);
+	cv::Vec3f eulerAngles(headpose3D[3], headpose3D[4], headpose3D[5]);
+	cv::Matx33f rotMat = Utilities::Euler2RotationMatrix(eulerAngles);
+	face = face.t();
+	cv::Mat eyeballCenterMat = (face.row(36) + face.row(39)) / 2.0f + (cv::Mat(rotMat)*offset).t();
+	//cout << eyeballCenterMat.size << endl;
+
+	std::copy(reinterpret_cast<const float*>(eyeballCenterMat.datastart)
+		, reinterpret_cast<const float*>(eyeballCenterMat.dataend)
+		, eyeballCenter);
+	//cout << eyeballCenter << endl;
+	parameTerflag = gazeVector[0] * planeVector[0] + gazeVector[1] * planeVector[1] + gazeVector[2] * planeVector[2];
+	parameTer = ((planePoint[0] - eyeballCenter[0])*planeVector[0] + (planePoint[1] - eyeballCenter[1])*planeVector[1] + (planePoint[2] - eyeballCenter[2])*planeVector[2]) / parameTerflag;
+	gazePoint[0] = eyeballCenter[0] + gazeVector[0] * parameTer;
+	gazePoint[1] = eyeballCenter[1] + gazeVector[1] * parameTer;
+	gazePoint[2] = eyeballCenter[2] + gazeVector[2] * parameTer;
+}
+FeatureHouse::FeatureHouse() {
+	frameNumber = 0;
+	effFrameNumber = 0;
+	cont_frames = 0;
+	cont_frames_mod = 0;
+	blink_count = 0;
+	threshold = -1;
+
+	model_L = svm_load_model("Eyeoc_svm_L");
+	model_R = svm_load_model("Eyeoc_svm_R");
+	svm1 = cv::ml::StatModel::load<cv::ml::SVM>("Eyeoc_svm.xml");
+	//rtree = cv::ml::StatModel::load<cv::ml::RTrees>("Eyeoc_rtree.xml");
+
+	outFile.open("test.csv", ios::out);
+	outFile << "eye_diameter" << ',' << "eye_ratio" << ',';
+	outFile << "ear" << ',' << "blink" << ',' << "threshold" << ',' << "maxEar" << ',' << "minEar" << ',';
+	outFile << "b_freq" << ',' << "b_interval" << ',' << "b_last" << ',' << "perclos" << ',';
+	//outFile << "res_left" << ',' << "res_right" << ',';
+	outFile << "gaze_0_x" << ',' << "gaze_0_y" << ',' << "gaze_0_z" << ',' << "gaze_1_x" << ',' << "gaze_1_y" << ',' << "gaze_1_z" << ',' << " gaze_angle_x" << ',' << " gaze_angle_y" << ',';
+	outFile << "gaze_count" << ',' << "gaze_time" << ',' << "saccade_angle_sum" << ',';
+	for (int i = 0; i < 56; i++) {
+		outFile << " eye_lmk_x_" << i << ',' << "eye_lmk_y_" << i << ',';
 	}
-	void SwitchOpenFace(bool useOpenFace);
+	for (int i = 0; i < 56; i++) {
+		outFile << " eye_lmk_X_" << i << ',' << "eye_lmk_Y_" << i << ',' << "eye_lmk_Z_" << i << ',';
+	}
+	for (int i = 0; i < 68; i++) {
+		outFile << "x_" << i << ',' << "y_" << i << ',';
+	}
+	for (int i = 0; i < 68; i++) {
+		outFile << "X_" << i << ',' << "Y_" << i << ',' << "Z_" << i << ',';
+	}
+	outFile << "pose_Tx" << ',' << "pose_Ty" << ',' << "pose_Tz" << ',' << "pose_Rx" << ',' << "pose_Ry" << ',' << "pose_Rz" << ',';
+}
 
-	//Start a thread using webcam(id=index)
-	cv::Size StartThread(int index);
-	//Start a thread using webcam(id=index), meanwhile save the video to the disk(path=fileName)
-	cv::Size StartThread(int index, const std::string & fileName);
-	//Start a thread reading video from disk(path=fileName)
-	cv::Size StartThread(const std::string & fileName);
-	//Stop the current thread, release the relevant resources
-	void StopThread();
-	//@return false if cv::Mat is invalid ,otherwise return true
-	bool GetColorImg(cv::Mat & c);
+bool FeatureHouse::SetFeature(void* face_model, void* parameters, cv::Mat &greyImg, cv::Mat &colorImg, float fx, float fy, float cx, float cy) {
+	static cv::Point3f gazeDirection0(0, 0, -1);
+	static cv::Point3f gazeDirection1(0, 0, -1);
+	cv::Vec2f gaze_angle(0, 0);
+	static std::vector<cv::Point2f> eyeLandmark2D;
+	static std::vector<cv::Point3f> eyeLandmark3D;
+	auto tempFaceModel = reinterpret_cast<LandmarkDetector::CLNF*>(face_model);
+	auto tempParameter = reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters);
+	confidence = tempFaceModel->detection_certainty;
+	//openface calculate
+	bool detection_success = LandmarkDetector::DetectLandmarksInVideo(colorImg, *tempFaceModel, *tempParameter, greyImg);
+	frameNumber++;
+	if (detection_success)
+	{
+		effFrameNumber++;
 
-	//@return false if openface isno't used or didn't work successfully ,otherwise return true
-	//@landmark2d: x1,y1 ; x2, y2 ....
-	bool GetLandmark2d(float landmark2d[68 * 2]);
+		//face_analyser部分
+		((FaceAnalysis::FaceAnalyser *)face_analyser)->PredictStaticAUsAndComputeFeatures(colorImg, tempFaceModel->detected_landmarks);
+		au_reg = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsReg();
+		au_class = ((FaceAnalysis::FaceAnalyser *)face_analyser)->GetCurrentAUsClass();
 
-	//@return false if openface isno't used or didn't work successfully ,otherwise return true
-	//@pupilCenter3d: x_left ,y_left ,z_left ; x_right ,y_right ,z_right
-	bool GetPupilCenter3d(float pupilCenter3d[6]);
 
-	//@return false if openface isno't used or didn't work successfully ,otherwise return true
-	//@gaze: x_left,y_left,z_left ; x_right ,y_right ,z_right
-	bool GetGazeVector(float gaze[6]);
+		if (!isInit) {
+			for (int i = 0; i < au_reg.size(); i++) {
+				outFile << au_reg[i].first << "_r" << ',';
+			}
+			for (int i = 0; i < au_class.size(); i++) {
+				outFile << au_class[i].first << "_c" << ',';
+			}
+			outFile << endl;
+			isInit = true;
+		}
 
-	//@return false if openface isno't used or didn't work successfully ,otherwise return true
-	//@headpose: position_x/y/z ; euler_x/y/z
-	bool GetHeadPose(float headpose[6]);
-};
+		//�ж����⶯��
+		actions.clear();
+		for (int i = 0; i < au_reg.size(); ++i) {
+			//cout << au_reg[i].first << " " << au_reg[i].second << endl;
+			if (au_reg[i].first == "AU04" && au_reg[i].second >= 1) {
+				actions.push_back(4);
+			}
+			else if (au_reg[i].first == "AU10" && au_reg[i].second >= 0.2) {
+				actions.push_back(10);
+			}
+			else if (au_reg[i].first == "AU12" && au_reg[i].second >= 0.5) {
+				actions.push_back(12);
+			}
+			else if (au_reg[i].first == "AU14" && au_reg[i].second >= 0.5) {
+				actions.push_back(14);
+			}
+			else if (au_reg[i].first == "AU20" && au_reg[i].second >= 1.2) {
+				actions.push_back(20);
+			}
+			else if (au_reg[i].first == "AU26" && au_reg[i].second >= 0.5) {
+				actions.push_back(26);
+			}
+		}
+		for (int i = 0; i < au_class.size(); ++i) {
+			if (au_class[i].first == "AU25" && au_class[i].second == 1) {
+				actions.push_back(25);
+			}
+		}
+		/*for (auto au : actions) {
+		cout << au << " ";
+		}
+		cout << endl;*/
+
+
+		if (tempFaceModel->eye_model)
+		{
+			GazeAnalysis::EstimateGaze(*tempFaceModel, gazeDirection0, fx, fy, cx, cy, true);
+			GazeAnalysis::EstimateGaze(*tempFaceModel, gazeDirection1, fx, fy, cx, cy, false);
+			gaze_angle = GazeAnalysis::GetGazeAngle(gazeDirection0, gazeDirection1);
+			gaze_angle_x = gaze_angle[0];
+			gaze_angle_y = gaze_angle[1];
+			eyeLandmark2D = LandmarkDetector::CalculateAllEyeLandmarks(*tempFaceModel);
+			GazePoint(tempFaceModel->GetShape(fx, fy, cx, cy));
+			eyeLandmark3D = LandmarkDetector::Calculate3DEyeLandmarks(*tempFaceModel, fx, fy, cx, cy);
+
+			for (int i = 0; i < eyeLandmark2D.size(); i++) {
+				eye_Landmark2D[2 * i] = eyeLandmark2D[i].x;
+				eye_Landmark2D[2 * i + 1] = eyeLandmark2D[i].y;
+			}
+			for (int i = 0; i < eyeLandmark3D.size(); i++) {
+				eye_Landmark3D[3 * i] = eyeLandmark3D[i].x;
+				eye_Landmark3D[3 * i + 1] = eyeLandmark3D[i].y;
+				eye_Landmark3D[3 * i + 2] = eyeLandmark3D[i].z;
+			}
+		}
+
+		// Work out the pose of the head from the tracked model
+		pose_estimate = LandmarkDetector::GetPose(*tempFaceModel, fx, fy, cx, cy);
+
+		//data copy zone ,use fhInstance->output mutex
+		std::lock_guard<std::mutex> lm(output);
+
+		for (int i = 0; i < pose_estimate.channels; ++i) {
+			headpose3D[i] = pose_estimate[i];
+		}
+		for (int i = 0; i < 6; ++i) {
+			pupilCenter3D[i] = 0.0f;
+		}
+		//why 8?
+		for (int i = 0; i < 8; ++i) {
+			//left & right
+			pupilCenter3D[0] += eyeLandmark3D[i].x;
+			pupilCenter3D[1] += eyeLandmark3D[i].y;
+			pupilCenter3D[2] += eyeLandmark3D[i].z;
+			pupilCenter3D[3] += eyeLandmark3D[i + eyeLandmark3D.size() / 2].x;
+			pupilCenter3D[4] += eyeLandmark3D[i + eyeLandmark3D.size() / 2].y;
+			pupilCenter3D[5] += eyeLandmark3D[i + eyeLandmark3D.size() / 2].z;
+		}
+		for (int i = 0; i < 6; ++i) {
+			pupilCenter3D[i] /= 8;
+		}
+		gazeVector[0] = gazeDirection0.x;
+		gazeVector[1] = gazeDirection0.y;
+		gazeVector[2] = gazeDirection0.z;
+		gazeVector[3] = gazeDirection1.x;
+		gazeVector[4] = gazeDirection1.y;
+		gazeVector[5] = gazeDirection1.z;
+
+		//landmark2D
+		float tempLandmark[136];
+		std::copy(reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.datastart)
+			, reinterpret_cast<const float*>(tempFaceModel->detected_landmarks.dataend)
+			, tempLandmark);
+		//将landmark顺序进行调整，调整成x1 y1 x2 y2...x68 y68
+		for (int i = 0; i < 68; i++) {
+			landmark2D[2 * i] = tempLandmark[i];
+			landmark2D[2 * i + 1] = tempLandmark[i + 68];
+		}
+
+		//landmark3D
+		cv::Mat1f tempMat = tempFaceModel->GetShape(fx, fy, cx, cy);
+		float tempLandmark3D[204];
+		std::copy(reinterpret_cast<const float*>(tempMat.datastart)
+			, reinterpret_cast<const float*>(tempMat.dataend)
+			, tempLandmark3D);
+		for (int i = 0; i < 68; i++) {
+			landmark3D[3 * i] = tempLandmark3D[i];
+			landmark3D[3 * i + 1] = tempLandmark3D[i + 68];
+			landmark3D[3 * i + 2] = tempLandmark3D[i + 136];
+		}
+#pragma region gazepoint block
+		//cout << saccade_angle_sum << endl;
+		if (abs(gaze_angle_x - gaze_last_angle_x) < 0.01 || abs(gaze_angle_y - gaze_last_angle_y) < 0.01)
+		{
+			gaze_frames++;
+			saccade_angle_sum = 0;
+			saccade_dist_sum = 0;
+		}
+		else
+		{
+			saccade_dist_sum += GetDistance3D(gazeLastpoint, gazePoint);
+			saccade_angle_sum += GazeCosinDiff(gazeLastvector, gazeVector);
+			if (gaze_frames > 4)
+			{
+				gaze_count++;
+			}
+			gaze_frames = 0;
+			//gaze_frame_sum += gaze_frames;
+		}
+		//cout << (abs(gazeaverageLastvector[0] - averageGaze[0]) < 0.05) << endl;
+		//cout << "saccade_angle_sum" << " " << saccade_dist_sum << endl;
+		gaze_last_angle_x = gaze_angle_x;
+		gaze_last_angle_y = gaze_angle_y;
+		gaze_time = gaze_frames / 25;
+		for (int i = 0; i < 5; i++)
+		{
+			gazeLastvector[i] = gazeVector[i];
+		}
+		//cout << "gaze_time" << " " << gaze_time << endl;
+		for (int i = 0; i < 3; i++)
+		{
+			gazeLastpoint[i] = gazePoint[i];
+		}
+#pragma endregion		
+		//求瞳孔变化
+		float left_eye_small_diameter = (GetEyeDistance3D(20, 24) + GetEyeDistance3D(21, 25) + GetEyeDistance3D(22, 26) + GetEyeDistance3D(23, 27)) / 4;
+		float right_eye_small_diameter = (GetEyeDistance3D(48, 52) + GetEyeDistance3D(49, 53) + GetEyeDistance3D(50, 54) + GetEyeDistance3D(51, 55)) / 4;
+		float left_eye_big_diameter = (GetEyeDistance3D(0, 4) + GetEyeDistance3D(1, 5) + GetEyeDistance3D(2, 6) + GetEyeDistance3D(3, 7)) / 4;
+		float right_eye_big_diameter = (GetEyeDistance3D(28, 32) + GetEyeDistance3D(29, 33) + GetEyeDistance3D(30, 34) + GetEyeDistance3D(31, 35)) / 4;
+		float left_ratio = left_eye_small_diameter / left_eye_big_diameter;
+		float right_ratio = right_eye_small_diameter / right_eye_big_diameter;
+		//瞳孔直径
+		eye_diameter = (left_eye_small_diameter + right_eye_small_diameter) / 2;
+		float eye_diameter_big = (left_eye_big_diameter + right_eye_big_diameter) / 2;
+		eye_ratio = (left_ratio + right_ratio) / 2;
+		//cout << left_eye_big_diameter << " " << left_eye_small_diameter << " " << right_eye_big_diameter << " " << right_eye_small_diameter << endl;
+		//cout << eye_diameter << " " << eye_diameter_big << " " << left_ratio << " " << right_ratio << endl;
+
+
+#pragma region SVM
+		//用来保存眼部特征点
+		std::vector<cv::Point> leftEyeLmk;
+		std::vector<cv::Point> rightEyeLmk;
+
+		//特征点保存
+		for (int i = 36; i <= 41; i++) {
+			cv::Point p(landmark2D[2 * i], landmark2D[2 * i + 1]);
+			leftEyeLmk.push_back(p);
+		}
+		for (int i = 42; i <= 47; i++) {
+			cv::Point p(landmark2D[2 * i], landmark2D[2 * i + 1]);
+			rightEyeLmk.push_back(p);
+		}
+
+		//眼部矩形确定
+		cv::Rect temp_left = cv::boundingRect(leftEyeLmk);
+		cv::Rect rect_left = RectCenterScale(temp_left, cv::Size(temp_left.height, temp_left.width));
+		cv::Rect temp_right = cv::boundingRect(rightEyeLmk);
+		cv::Rect rect_right = RectCenterScale(temp_right, cv::Size(temp_right.height, temp_right.width));
+
+		bool left_eye_sign = true;
+		bool right_eye_sign = true;
+		float res_left = 1;
+		float res_right = 1;
+
+
+		//ʹ��ģ��
+		//����
+		try {
+			cv::Mat eye_rect_left = colorImg(rect_left);
+			cv::resize(eye_rect_left, eye_rect_left, cv::Size(24, 24));
+			cv::Mat eye_gray_left;
+			cv::cvtColor(eye_rect_left, eye_gray_left, CV_BGR2GRAY);
+			//cv::equalizeHist(eye_gray_left, eye_gray_left);
+			//cv::imshow("left_eye", eye_gray_left);
+			eye_gray_left.convertTo(eye_gray_left, CV_32F, 1.0 / 255.0);
+			svm_node* node_left = new svm_node[1 + 576];
+			for (int i = 0; i<576; ++i) {
+				node_left[i].index = i + 1;
+				node_left[i].value = eye_gray_left.at<float>(i / 24, i % 24);
+			}
+			node_left[576].index = -1;
+			double* prob_l = new double[2];
+			res_left = (float)svm_predict_probability(model_L, node_left, prob_l);
+			delete node_left;
+			//cout << res_left << "  " << prob_l[1] << " ";
+
+			/*cv::Mat input_eye_left(cv::Size(24 * 24, 1), CV_32F);
+			for (int i = 0; i < 24; ++i)
+			for (int j = 0; j < 24; ++j)
+			input_eye_left.at<float>(i * 24 + j) = eye_gray_left.at<float>(i, j);
+			float res_left = svm1->predict(input_eye_left);*/
+
+			/*float res_left = rtree->predict(input_eye_left);
+			cv::Mat tttt;
+			rtree->predict(input_eye_left, tttt, cv::ml::StatModel::RAW_OUTPUT);*/
+		}
+		catch (...) {
+			left_eye_sign = false;
+		}
+
+
+
+		//右眼
+		try {
+			cv::Mat eye_rect_right = colorImg(rect_right);
+			cv::resize(eye_rect_right, eye_rect_right, cv::Size(24, 24));
+			cv::Mat eye_gray_right;
+			cv::cvtColor(eye_rect_right, eye_gray_right, CV_BGR2GRAY);
+			//cv::equalizeHist(eye_gray_right, eye_gray_right);
+			//cv::imshow("right_eye", eye_gray_right);
+			eye_gray_right.convertTo(eye_gray_right, CV_32F, 1.0 / 255.0);
+			svm_node* node_right = new svm_node[1 + 576];
+			for (int i = 0; i<576; ++i) {
+				node_right[i].index = i + 1;
+				node_right[i].value = eye_gray_right.at<float>(i / 24, i % 24);
+			}
+			node_right[576].index = -1;
+			double* prob_r = new double[2];
+			res_right = (float)svm_predict_probability(model_R, node_right, prob_r);
+			delete node_right;
+			//cout << res_right << " " << prob_r[1];
+
+			/*cv::Mat input_eye_right(cv::Size(24 * 24, 1), CV_32F);
+			for (int i = 0; i < 24; ++i)
+			for (int j = 0; j < 24; ++j)
+			input_eye_right.at<float>(i * 24 + j) = eye_gray_right.at<float>(i, j);
+			float res_right = svm1->predict(input_eye_right);*/
+
+			/*float res_right = rtree->predict(input_eye_right);
+			cv::Mat tttt2;
+			rtree->predict(input_eye_right, tttt2, cv::ml::StatModel::RAW_OUTPUT);*/
+		}
+		catch (...) {
+			right_eye_sign = false;
+		}
+
+		while (recentSVM.size() > TIMESLICE)
+		{
+			closeSum = recentSVM.front() ? closeSum - 1 : closeSum;
+			recentSVM.pop();
+		}
+
+		if (left_eye_sign && right_eye_sign && !res_left && !res_right) {
+			recentSVM.push(true);
+			closeSum++;
+		}
+		else
+		{
+			recentSVM.push(false);
+		}
+
+		//cout << endl;
+#pragma endregion
+
+		//头部转变角度之和
+		float eu_sum = 0;
+		headpose_change = false;
+		if (init_head) {
+			for (int i = 3; i <= 5; i++)
+				eu_sum += abs(former_headpose3D[i] - headpose3D[i]);
+
+			//如果头部转动过大则重置眨眼判定条件
+			if (eu_sum > 0.15) {
+				cont_frames = 0;
+				currentBlink.startFrame = -1;
+				currentBlink.blinkTimeSum = 0;
+			}
+
+			if (eu_sum > 0.05) {
+				headpose_change = true;
+				showBox = 15;
+			}
+
+			/*
+			//ͷ������ı�
+			eu_sum = 0;
+			for (int i = 0; i <= 2; i++)
+			eu_sum += abs(former_headpose3D[i] - headpose3D[i]);*/
+
+			//cout << eu_sum << " ";
+			for (int i = 0; i < 6; i++) {
+				cout << headpose3D[i] << " ";
+			}
+			cout << endl;
+		}
+
+		std::copy(headpose3D, headpose3D + 6, former_headpose3D);
+		init_head = true;
+
+#pragma region EAR
+		//左右眼分别计算EAR，再求平均值
+		float former_ear = ear;
+		float left_eye, right_eye;
+		left_eye = EyeAspectRatio(GetDistance3D(37, 41), GetDistance3D(38, 40), GetDistance3D(36, 39));
+		right_eye = EyeAspectRatio(GetDistance3D(43, 47), GetDistance3D(44, 46), GetDistance3D(42, 45));
+		ear = (left_eye + right_eye) / 2;
+		//cout << left_eye << " " << right_eye << endl;
+		//cout << GetDistance3D(37, 41) << " " << GetDistance3D(38, 40) << " " << GetDistance3D(36, 39) << endl;
+
+		if (ear > maxEAR)
+			maxEAR = ear;
+		if (ear < minEAR)
+			minEAR = ear;
+		if (ear > tempMaxEAR)
+			tempMaxEAR = ear;
+		if (ear < tempMinEAR)
+			tempMinEAR = ear;
+
+		//刷新阈值
+		if (!(effFrameNumber % 10)) {
+			maxEAR = tempMaxEAR;
+			minEAR = tempMinEAR;
+			tempMaxEAR = -1;
+			tempMinEAR = 10;
+		}
+
+		float former_thresh = threshold;
+		threshold = maxEAR - 0.02 > (maxEAR + minEAR) / 2 ? (maxEAR + minEAR) / 2 : maxEAR - 0.02;
+
+		//排除睁眼平均ear低于阈值而计数眨眼情况
+		//阈值变化大，ear变化小（排除眨眼），前ear低于阈值，现ear高于阈值
+		if (former_thresh - threshold >= 0.01 && abs(ear - former_ear) < 0.01 && (former_ear - former_thresh) * (ear - threshold) < 0) {
+			cont_frames = 0;
+			currentBlink.startFrame = -1;
+			currentBlink.blinkTimeSum = 0;
+		}
+
+#pragma endregion
+
+		//维护队列，如果眨眼已经过期，则弹出队列
+		while (!recentBlink.empty() && ((int)frameNumber - TIMESLICE > recentBlink.front().startFrame)) {
+			recentBlink.back().blinkTimeSum -= (recentBlink.front().endFrame - recentBlink.front().startFrame + 1);
+			recentBlink.pop();
+		}
+
+#pragma region 权重
+		////计算眨眼的权重，分别为模型法、ear、总权重
+		//int wt_model = 0, wt_ear = 0, wt;
+
+		////计算权重
+		////标志位
+		//bool sign_mod = false, sign_ear = false;
+		////SVM方法
+		//if (!res_left && !res_right) {	//两只眼睛都闭
+		//	if (startFrame_mod == -1) {
+		//		startFrame_mod = frameNumber;
+		//	}
+		//	cont_frames_mod++;
+		//	if (cont_frames_mod >= 2) {
+		//		wt_model = 10;
+		//	}
+		//	wt_model = wt_model > 8 ? wt_model : 8;
+		//}
+		//else if (!res_left || !res_right) {		//闭一只眼睛
+		//	if (startFrame_mod == -1) {
+		//		startFrame_mod = frameNumber;
+		//	}
+		//	wt_model = 3;
+		//}
+		//else
+		//{
+		//	if (cont_frames_mod >= 1 && cont_frames_mod < EYE_FRAME_MAX) {
+		//		wt_model = 5;
+		//	}
+		//	//重置
+		//	//startFrame_mod = -1;
+		//	sign_mod = true;
+		//	cont_frames_mod = 0;
+		//}
+
+		////EAR方法
+		//if (threshold != -1) {
+		//	if (ear <= threshold) {
+		//		cont_frames++;
+		//		if (startFrame_ear == -1) {
+		//			startFrame_ear = frameNumber;
+		//		}
+		//		wt_ear = 5;
+		//	}
+		//	else {
+		//		if (cont_frames >= EYE_FRAME_MIN && cont_frames < EYE_FRAME_MAX) {
+		//			wt_ear = 10;
+		//		}
+		//		//重置
+		//		//startFrame_ear = -1;
+		//		sign_ear = true;
+		//		cont_frames = 0;
+		//	}
+		//}
+
+		////权重求和
+		////权重阈值，一般情况为10，特殊情况时为5（由模型法控制眨眼）。特殊情况包括：EAR初始化阶段
+		//int wt_thresh = (threshold == -1) ? 5 : 10;
+		//wt = wt_ear + wt_model;
+		//if (wt >= wt_thresh) {
+		//	if (isBlinking == false) {
+		//		if (currentBlink.startFrame == -1) {
+		//			currentBlink.startFrame = wt_model > wt_ear ? startFrame_mod : startFrame_ear;
+		//			cout << currentBlink.startFrame << " " << startFrame_mod << " " << startFrame_ear << " " << wt_model << " " << wt_ear << endl;
+		//		}
+		//	}
+		//	isBlinking = true;
+		//}
+		//else
+		//{
+		//	if (isBlinking == true) {
+		//		blink_count++;
+		//		currentBlink.endFrame = frameNumber;
+		//		currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
+		//		if (!recentBlink.empty()) {
+		//			currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
+		//		}
+		//		recentBlink.push(currentBlink);
+		//		//cout << currentBlink.startFrame << " " << currentBlink.endFrame << " " << ear<<" "<<res_left<<" " <<res_right  << endl;
+		//	}
+		//	//重置
+		//	currentBlink.startFrame = -1;
+		//	currentBlink.blinkTimeSum = 0;
+		//	isBlinking = false;
+		//}
+
+		//startFrame_mod = (sign_mod) ? -1 : startFrame_mod;
+		//startFrame_ear = (sign_ear) ? -1 : startFrame_ear;
+
+#pragma endregion
+
+		//如果EAR低于threshold的次数在某个区间内，就记为1次眨眼
+		//同时记录最近10次眨眼的开始帧数、结束帧数，并计算出眨眼时间总和（方便计算）和与上次眨眼的间隔时间
+		if (ear <= threshold) {
+			cont_frames++;
+			if (currentBlink.startFrame == -1) {
+				currentBlink.startFrame = frameNumber;
+			}
+		}
+		else {
+			if (cont_frames >= EYE_FRAME_MIN && cont_frames < EYE_FRAME_MAX) {
+				blink_count++;
+				currentBlink.endFrame = frameNumber;
+				currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
+				if (!recentBlink.empty()) {
+					currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
+				}
+				recentBlink.push(currentBlink);
+			}
+			//重置
+			cont_frames = 0;
+			currentBlink.startFrame = -1;
+			currentBlink.blinkTimeSum = 0;
+		}
+
+		//模型法测试
+		//if (!res_left || !res_right) {
+		//	cont_frames++;
+		//	if (currentBlink.startFrame == -1) {
+		//		currentBlink.startFrame = frameNumber;
+		//	}
+		//}
+		//else {
+		//	if (cont_frames >= 1 && cont_frames < EYE_FRAME_MAX) {
+		//		blink_count++;
+		//		currentBlink.endFrame = frameNumber;
+		//		currentBlink.blinkTimeSum += (currentBlink.endFrame - currentBlink.startFrame + 1);
+		//		if (!recentBlink.empty()) {
+		//			currentBlink.blinkTimeSum += recentBlink.back().blinkTimeSum;
+		//		}
+		//		recentBlink.push(currentBlink);
+		//	}
+		//	//重置
+		//	cont_frames = 0;
+		//	currentBlink.startFrame = -1;
+		//	currentBlink.blinkTimeSum = 0;
+		//}
+
+
+		//将数据写入csv文件，作为记录
+		outFile << eye_diameter << ',' << eye_ratio << ',';
+		outFile << ear << ',' << blink_count << ',' << threshold << ',' << maxEAR << ',' << minEAR << ',';
+		outFile << blinkFrequency << ',' << blinkInterval << ',' << blinkLastTime << ',' << perclos << ',';
+		//outFile << res_left << ',' << res_right << ',';
+		for (int i = 0; i < 6; i++) {
+			outFile << gazeVector[i] << ',';
+		}
+		outFile << gaze_angle_x << ',' << gaze_angle_y << ',';
+		outFile << gaze_count << ',' << gaze_time << ',' << saccade_angle_sum << ',';
+		for (int i = 0; i < 56; i++) {
+			outFile << eye_Landmark2D[i * 2] << ',' << eye_Landmark2D[i * 2 + 1] << ',';
+		}
+		for (int i = 0; i < 56; i++) {
+			outFile << eye_Landmark3D[i * 3] << ',' << eye_Landmark3D[i * 3 + 1] << ',' << eye_Landmark3D[i * 3 + 2] << ',';
+		}
+		for (int i = 0; i < 68; i++) {
+			outFile << landmark2D[i * 2] << ',' << landmark2D[i * 2 + 1] << ',';
+		}
+		for (int i = 0; i < 68; i++) {
+			outFile << landmark3D[i * 3] << ',' << landmark3D[i * 3 + 1] << ',' << landmark3D[i * 3 + 2] << ',';
+		}
+		for (int i = 0; i < 6; i++) {
+			outFile << headpose3D[i] << ',';
+		}
+		for (int i = 0; i < au_reg.size(); i++) {
+			outFile << au_reg[i].second << ',';
+		}
+		for (int i = 0; i < au_class.size(); i++) {
+			outFile << au_class[i].second << ',';
+		}
+		outFile << endl;
+	}
+	else
+	{
+		//便于显示
+		ear = 0;
+	}
+	if (!recentBlink.empty() && frameNumber % 30 == 0) {
+		//要求队列非空且每30帧刷新一次数据
+		//计算眨眼频率，队列中眨眼次数 / 总时间，再把帧数换算成时间1800帧=1min，单位：次/min
+		blinkFrequency = (float)(recentBlink.size()) * 1800 / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber);
+		//计算眨眼间隔，总时间-眨眼消耗的时间 / 队列中眨眼次数，单位：s/次
+		blinkInterval = (float)(TIMESLICE - recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
+		//计算眨眼持续时间，眨眼消耗的时间 / 队列中眨眼次数，单位：s/次
+		blinkLastTime = (float)(recentBlink.back().blinkTimeSum) / (30 * recentBlink.size());
+		//计算perclos，闭眼总时间/总时间*100%
+		perclos = (float)(recentBlink.back().blinkTimeSum) / (frameNumber > TIMESLICE ? TIMESLICE : frameNumber) * 100;
+
+		//计算perclos，通过SVM计算闭眼帧数/总帧数
+		float temp = (float)closeSum * 100 / recentSVM.size();
+		perclos = temp > perclos ? temp : perclos;
+	}
+	else if (recentBlink.empty()) {
+		blinkFrequency = 0;
+		blinkInterval = 0;
+		blinkLastTime = 0;
+		perclos = 0;
+	}
+	return detection_success;
+}
+
+void FeatureHouse::GetLandmark2d(float landmark2d[68 * 2]) {
+	std::lock_guard<std::mutex> lm(output);
+	std::copy(landmark2D, landmark2D + 68 * 2, landmark2d);
+}
+
+void FeatureHouse::GetPupilCenter3d(float pupilCenter3d[6]) {
+	std::lock_guard<std::mutex> lm(output);
+	std::copy(pupilCenter3D, pupilCenter3D + 6, pupilCenter3d);
+}
+
+void FeatureHouse::GetGazeVector(float gaze[6]) {
+	std::lock_guard<std::mutex> lm(output);
+	std::copy(gazeVector, gazeVector + 6, gaze);
+}
+
+void FeatureHouse::GetHeadPose(float headpose[6]) {
+	std::lock_guard<std::mutex> lm(output);
+	std::copy(headpose3D, headpose3D + 6, headpose);
+}
+#pragma endregion
+
+#pragma region ATCDefine
+void ATC::ATC_Thread() {
+	std::cout << "threadStart" << std::endl;
+	cv::VideoWriter writer("test.avi", CV_FOURCC('M', 'P', '4', '2'), 30, cv::Size(imgDataInstance->width, imgDataInstance->height));
+
+	/*int open = 0, close = 0;
+	string filePath;*/
+
+	Utilities::Visualizer visualizer(true, false, false, false);
+	while (threadContinue) {
+		//std::cout << "threadContinue "<< std::endl;
+		cv::Mat greyImg, colorImg;
+		if (imgDataInstance->SetImg()) {
+			imgDataInstance->GetGreyImg(greyImg);
+			if (useOpenFace) {
+				GetColorImg(colorImg);
+				detection_success = fhInstance->SetFeature(face_model, parameters, greyImg, colorImg, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+
+				//绘制眼部特征点
+				if (detection_success) {
+
+					//�����۲�����
+					//cv::rectangle(colorImg, rect, CV_RGB(0, 255, 0));
+					//cv::rectangle(colorImg, cv::boundingRect(rightEyeLmk), CV_RGB(0, 255, 0));
+
+					//���ͷ����̬�䶯������ʾ
+					if (fhInstance->showBox > 0) {
+						Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+						fhInstance->showBox--;
+					}
+
+#pragma region paint
+					if (GetKeyState(VK_SPACE)) {
+						//绘制全部特征点
+						for (int i = 0; i < 68; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+						}
+
+						////头部姿态盒子
+						//Utilities::DrawBox(colorImg, fhInstance->pose_estimate, cv::Scalar(255, 0, 0), 1.5, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+
+						//绘制视线	
+						float draw_multiplier = 16;
+						int draw_shiftbits = 4;
+						//绘制瞳孔的轮廓
+						for (int i = 0; i <= 35; i++) {
+							if (i == 7) {
+								cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+								cv::Point p2(fhInstance->eye_Landmark2D[2 * 0], fhInstance->eye_Landmark2D[2 * 0 + 1]);
+								cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
+								i = 27;
+								continue;
+							}
+							else if (i == 35) {
+								cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+								cv::Point p2(fhInstance->eye_Landmark2D[2 * 28], fhInstance->eye_Landmark2D[2 * 28 + 1]);
+								cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
+								break;
+							}
+							cv::Point p1(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+							cv::Point p2(fhInstance->eye_Landmark2D[2 * (i + 1)], fhInstance->eye_Landmark2D[2 * (i + 1) + 1]);
+							cv::line(colorImg, p1, p2, cv::Scalar(255, 0, 0), 1, CV_AA);
+						}
+
+						//// Now draw the gaze lines themselves
+						//cv::Mat cameraMat = (cv::Mat_<float>(3, 3) << imgDataInstance->fx, 0, imgDataInstance->cx, 0, imgDataInstance->fy, imgDataInstance->cy, 0, 0, 0);
+
+						//// Grabbing the pupil location, to draw eye gaze need to know where the pupil is
+						//cv::Point3f pupil_left(fhInstance->pupilCenter3D[0], fhInstance->pupilCenter3D[1], fhInstance->pupilCenter3D[2]);
+						//cv::Point3f pupil_right(fhInstance->pupilCenter3D[3], fhInstance->pupilCenter3D[4], fhInstance->pupilCenter3D[5]);
+
+						//cv::Point3f gaze_direction0(fhInstance->gazeVector[0], fhInstance->gazeVector[1], fhInstance->gazeVector[2]);
+						//cv::Point3f gaze_direction1(fhInstance->gazeVector[3], fhInstance->gazeVector[4], fhInstance->gazeVector[5]);
+
+						//std::vector<cv::Point3f> points_left;
+						//points_left.push_back(cv::Point3f(pupil_left));
+						//points_left.push_back(cv::Point3f(pupil_left) + cv::Point3f(gaze_direction0)*50.0);
+
+						//std::vector<cv::Point3f> points_right;
+						//points_right.push_back(cv::Point3f(pupil_right));
+						//points_right.push_back(cv::Point3f(pupil_right) + cv::Point3f(gaze_direction1)*50.0);
+
+						//cv::Mat_<float> proj_points;
+						//cv::Mat_<float> mesh_0 = (cv::Mat_<float>(2, 3) << points_left[0].x, points_left[0].y, points_left[0].z, points_left[1].x, points_left[1].y, points_left[1].z);
+						//Utilities::Project(proj_points, mesh_0, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+						//cv::line(colorImg, cv::Point(cvRound(proj_points.at<float>(0, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(0, 1) * (float)draw_multiplier)),
+						//	cv::Point(cvRound(proj_points.at<float>(1, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(1, 1) * (float)draw_multiplier)), cv::Scalar(110, 220, 0), 2, CV_AA, draw_shiftbits);
+
+						//cv::Mat_<float> mesh_1 = (cv::Mat_<float>(2, 3) << points_right[0].x, points_right[0].y, points_right[0].z, points_right[1].x, points_right[1].y, points_right[1].z);
+						//Utilities::Project(proj_points, mesh_1, imgDataInstance->fx, imgDataInstance->fy, imgDataInstance->cx, imgDataInstance->cy);
+						//cv::line(colorImg, cv::Point(cvRound(proj_points.at<float>(0, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(0, 1) * (float)draw_multiplier)),
+						//	cv::Point(cvRound(proj_points.at<float>(1, 0) * (float)draw_multiplier), cvRound(proj_points.at<float>(1, 1) * (float)draw_multiplier)), cv::Scalar(110, 220, 0), 2, CV_AA, draw_shiftbits);
+					}
+#pragma endregion
+
+					//瞳孔特征点绘制
+					/*for (int i = 48; i <= 55; i++) {
+					cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					}
+					for (int i = 20; i <= 27; i++) {
+					cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					}*/
+
+					//眼睛轮廓
+					/*for (int i = 8; i <= 19; i++) {
+					cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					}
+					for (int i = 36; i <= 47; i++) {
+					cv::Point p(fhInstance->eye_Landmark2D[2 * i], fhInstance->eye_Landmark2D[2 * i + 1]);
+					cv::circle(colorImg, p, 2, cv::Scalar(0, 0, 255), -1);
+					}*/
+				}
+
+				//添加文字
+				char text[255];
+				sprintf(text, "%.4f", fhInstance->ear);
+				string earStr("EAR:");
+				earStr += text;
+				sprintf(text, "%u", fhInstance->blink_count);
+				string blinkStr("BLINK:");
+				blinkStr += text;
+				sprintf(text, "%.2f", fhInstance->blinkFrequency);
+				string freStr("FREQ:");
+				freStr += text;
+				freStr += "ts/min";
+				sprintf(text, "%.2f", fhInstance->blinkInterval);
+				string interStr("INTER:");
+				interStr += text;
+				interStr += "s/ts";
+				sprintf(text, "%.2f", fhInstance->blinkLastTime);
+				string lastStr("LAST:");
+				lastStr += text;
+				lastStr += "s/ts";
+				sprintf(text, "%.2f", fhInstance->perclos);
+				string percStr("PERCLOS:");
+				percStr += text;
+				percStr += "%";
+
+				sprintf(text, "%.4f", fhInstance->eye_diameter);
+				string diaStr("EyeDia:");
+				diaStr += text;
+				sprintf(text, "%.4f", fhInstance->eye_ratio);
+				string ratStr("EyeRat:");
+				ratStr += text;
+
+				sprintf(text, "%u", fhInstance->gaze_count);
+				string gazecountStr("GAZECOUNT:");
+				gazecountStr += text;
+				sprintf(text, "%.2f", fhInstance->gaze_time);
+				string gazetimeStr("GAZETIME:");
+				gazetimeStr += text;
+				sprintf(text, "%.2f", fhInstance->saccade_angle_sum);
+				string saccadeanglesumStr("SACCADEAM:");
+				saccadeanglesumStr += text;
+				sprintf(text, "%.2f", fhInstance->saccade_dist_sum);
+				string saccadedistsumStr("SACCADEdst:");
+				saccadedistsumStr += text;
+				//头部位置
+				string headposeStr("HEADPOSE: ");
+				string headposeangleStr("HEADPOSEAG: ");
+				string leftBrackets("(");
+				string rightBrackts(")");
+				string comma(",");
+				sprintf(text, "%.2f", fhInstance->headpose3D[0]);
+				headposeStr += (leftBrackets + text + comma);
+				sprintf(text, "%.2f", fhInstance->headpose3D[1]);
+				headposeStr += (text + comma);
+				sprintf(text, "%.2f", fhInstance->headpose3D[2]);
+				headposeStr += (text + rightBrackts);
+				//头部旋转角度
+				sprintf(text, "%.2f", fhInstance->headpose3D[3]);
+				headposeangleStr += (leftBrackets + text + comma);
+				sprintf(text, "%.2f", fhInstance->headpose3D[4]);
+				headposeangleStr += (text + comma);
+				sprintf(text, "%.2f", fhInstance->headpose3D[5]);
+				headposeangleStr += (text + rightBrackts);
+
+				//眨眼
+				cv::putText(colorImg, blinkStr, cv::Point(20, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, earStr, cv::Point(20, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				//blink parameter threshold detection
+				if (fhInstance->blinkFrequency < FREQ_THRESH)
+					cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, freStr, cv::Point(20, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (fhInstance->blinkInterval < INTER_THRESH)
+					cv::putText(colorImg, interStr, cv::Point(20, 100), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, interStr, cv::Point(20, 100), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (fhInstance->blinkLastTime < LAST_THRESH)
+					cv::putText(colorImg, lastStr, cv::Point(20, 120), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, lastStr, cv::Point(20, 120), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (fhInstance->perclos < PERCLOS_THRESH)
+					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, percStr, cv::Point(20, 140), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+				//ͫpupil diameter parameter
+
+				cv::putText(colorImg, diaStr, cv::Point(20, 180), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, ratStr, cv::Point(20, 200), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+
+				//特殊动作
+				string browStr("brow: ");
+				string lipStr("lip: ");
+				string jawStr("jaw: ");
+				bool brow = false, lip = false, jaw = false;
+				cv::Point temp1(fhInstance->landmark2D[2 * 48], fhInstance->landmark2D[2 * 48 + 1]);
+				//cv::Point temp2(fhInstance->landmark2D[2 * 54], fhInstance->landmark2D[2 * 54 + 1]);
+				for (auto act : fhInstance->actions) {
+					switch (act)
+					{
+					case 4:
+						browStr += "brow lowerer";
+						brow = true;
+						for (int i = 17; i <= 26; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
+						}
+						break;
+						/*case 10:
+						lipStr = lipStr + (lip ? " & upper lip raiser" : "upper lip raiser");
+						lip = true;
+						break;*/
+					case 12:
+						lipStr = lipStr + (lip ? " & lip corner puller" : "lip corner puller");
+						lip = true;
+						cv::circle(colorImg, temp1, 2, cv::Scalar(0, 255, 0), -1);
+						//cv::circle(colorImg, temp2, 2, cv::Scalar(0, 255, 0), -1);
+						for (int i = 54; i <= 59; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
+						}
+						break;
+						/*case 14:
+						lipStr = lipStr + (lip ? " & dimpler" : "dimpler");
+						lip = true;
+						break;*/
+						/*case 20:
+						lipStr = lipStr + (lip ? " & lip strethed" : "lip strethed");
+						lip = true;
+						break;*/
+					case 25:
+						lipStr = lipStr + (lip ? " & lip part" : "lip part");
+						lip = true;
+						for (int i = 60; i <= 67; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
+						}
+						break;
+					case 26:
+						jawStr += "jaw drop";
+						jaw = true;
+						for (int i = 5; i <= 11; i++) {
+							cv::Point p(fhInstance->landmark2D[2 * i], fhInstance->landmark2D[2 * i + 1]);
+							cv::circle(colorImg, p, 2, cv::Scalar(0, 255, 0), -1);
+						}
+						break;
+					default:
+						break;
+					}
+				}
+				if (brow)
+					cv::putText(colorImg, browStr, cv::Point(20, 240), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else {
+					browStr += "normal";
+					cv::putText(colorImg, browStr, cv::Point(20, 240), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				}
+
+				if (lip)
+					cv::putText(colorImg, lipStr, cv::Point(20, 260), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else {
+					lipStr += "normal";
+					cv::putText(colorImg, lipStr, cv::Point(20, 260), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				}
+
+				if (jaw)
+					cv::putText(colorImg, jawStr, cv::Point(20, 280), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else {
+					jawStr += "normal";
+					cv::putText(colorImg, jawStr, cv::Point(20, 280), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				}
+
+				//注视
+				cv::putText(colorImg, gazecountStr, cv::Point(450, 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, gazetimeStr, cv::Point(450, 40), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, saccadeanglesumStr, cv::Point(450, 60), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				cv::putText(colorImg, saccadedistsumStr, cv::Point(450, 80), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+
+				for (int i = 0; i < fhInstance->au_class.size(); ++i) {
+					sprintf(text, "%.3f", fhInstance->au_class[i].second);
+					string auStr(fhInstance->au_class[i].first + ": ");
+					auStr += text;
+					cv::putText(colorImg, auStr, cv::Point(500, 100 + i * 20), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+
+				}
+				//heapose threshold detection
+				if (fhInstance->headpose3D[2]>HEADPOSE_THRESH)
+					cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, headposeStr, cv::Point(20, 440), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				if (abs(fhInstance->headpose3D[4])<HEADPOSEANGLE_THRESH)
+					cv::putText(colorImg, headposeangleStr, cv::Point(20, 460), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(255, 0, 0), 1, CV_AA);
+				else
+					cv::putText(colorImg, headposeangleStr, cv::Point(20, 460), CV_FONT_HERSHEY_SIMPLEX, 0.6, CV_RGB(0, 255, 0), 1, CV_AA);
+
+				writer << colorImg;
+				cv::imshow("test", colorImg);
+				cv::waitKey(5);
+			}
+		}
+		else if (!imgDataInstance->IsValid()) {
+			break;
+		}
+	}
+	fhInstance->outFile.close();
+	std::cout << "thread exit" << std::endl;
+}
+
+void ATC::SwitchOpenFace(bool useOpenFace) {
+	this->useOpenFace = useOpenFace;
+}
+
+cv::Size ATC::StartThread(int index) {
+	threadContinue = true;
+	if (imgDataInstance->Open(index)) {
+		t = new std::thread(std::bind(&ATC::ATC_Thread, this));
+		std::cout << imgDataInstance->width << " " << imgDataInstance->height << std::endl;
+		return cv::Size(imgDataInstance->width, imgDataInstance->height);
+	}
+	else {
+		return cv::Size(0, 0);
+	}
+}
+
+cv::Size ATC::StartThread(int index, const std::string & fileName) {
+	threadContinue = true;
+	if (imgDataInstance->Open(index, fileName)) {
+		t = new std::thread(std::bind(&ATC::ATC_Thread, this));
+		std::cout << imgDataInstance->width << " " << imgDataInstance->height << std::endl;
+		return cv::Size(imgDataInstance->width, imgDataInstance->height);
+	}
+	else {
+		return cv::Size(0, 0);
+	}
+}
+
+cv::Size ATC::StartThread(const std::string & fileName) {
+	threadContinue = true;
+	if (imgDataInstance->Open(fileName)) {
+		t = new std::thread(std::bind(&ATC::ATC_Thread, this));
+		std::cout << imgDataInstance->width << " " << imgDataInstance->height << std::endl;
+		return cv::Size(imgDataInstance->width, imgDataInstance->height);
+	}
+	else {
+		return cv::Size(0, 0);
+	}
+}
+
+void ATC::StopThread() {
+	if (t != nullptr) {
+		threadContinue = false;
+		t->join();
+		delete t;
+		t = nullptr;
+		std::cout << "Stop Thread Over" << std::endl;
+		//other resources release
+		imgDataInstance->videoCapture.release();
+		if (imgDataInstance->outputFileName != "") {
+			imgDataInstance->colorWriter.release();
+		}
+	}
+}
+
+bool ATC::GetColorImg(cv::Mat & c)
+{
+	return threadContinue && imgDataInstance->GetColorImg(c);
+}
+
+bool ATC::GetLandmark2d(float landmark2d[68 * 2]) {
+	if (!useOpenFace || !detection_success)
+		return false;
+	fhInstance->GetLandmark2d(landmark2d);
+	return true;
+}
+
+bool ATC::GetPupilCenter3d(float pupilCenter3d[6]) {
+	if (!useOpenFace || !detection_success)
+		return false;
+	fhInstance->GetPupilCenter3d(pupilCenter3d);
+	return true;
+}
+
+bool ATC::GetGazeVector(float gaze[6]) {
+	if (!useOpenFace || !detection_success)
+		return false;
+	fhInstance->GetGazeVector(gaze);
+	return true;
+}
+
+bool ATC::GetHeadPose(float headpose[6]) {
+	if (!useOpenFace || !detection_success)
+		return false;
+	fhInstance->GetHeadPose(headpose);
+	return true;
+}
+
+bool ATC::OpenFaceInit(const std::string & exePath) {
+	vector<string> arguments = { exePath };
+	parameters = new LandmarkDetector::FaceModelParameters(arguments);
+	// The modules that are being used for tracking
+	std::cout << reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location << std::endl;
+	face_model = new LandmarkDetector::CLNF(reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters)->model_location);
+
+	fhInstance->face_analysis_params = new FaceAnalysis::FaceAnalyserParameters(arguments);
+	fhInstance->face_analyser = new FaceAnalysis::FaceAnalyser(*reinterpret_cast<FaceAnalysis::FaceAnalyserParameters*>(fhInstance->face_analysis_params));
+
+	if (!reinterpret_cast<LandmarkDetector::CLNF*>(face_model)->loaded_successfully)
+	{
+		std::cout << "ERROR: Could not load the landmark detector" << endl;
+		return false;
+	}
+	if (!reinterpret_cast<LandmarkDetector::CLNF*>(face_model)->eye_model)
+	{
+		std::cout << "WARNING: no eye model found" << endl;
+		return false;
+	}
+	return true;
+}
+
+ATC::~ATC() {
+	delete imgDataInstance;
+	delete reinterpret_cast<LandmarkDetector::FaceModelParameters*>(parameters);
+	delete reinterpret_cast<LandmarkDetector::CLNF*>(face_model);
+	delete fhInstance;
+}
+
+#pragma endregion
+
+ofstream outFile;
+
+int main(int argc, char **argv)
+{
+	/*for (int i = 0; i < argc; i++) {
+	cout <<i<<" "<< argv[i] << endl;
+	}*/
+	ATC* a = ATC::GetInstance(argv[0], true);
+	//a->StartThread("F:\\Project\\ATC\\ATC\\x64\\Release\\YDXJ0004_converter.wmv");
+	//a->StartThread("E:\\LYC\\文件\\大学\\学习\\实验室\\陆峰\\人脸识别_空管\\07_12空管实验数据采集\\剪辑_lyc\\管制2摄像头采集\\2_1.mp4");
+	//a->StartThread("2_1.mp4");
+	//a->StartThread(0, "test.avi");
+	a->StartThread(0);
+
+	system("pause");
+	return 0;
+}
