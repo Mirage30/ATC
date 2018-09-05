@@ -140,14 +140,15 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>D:\Libraries\opencv_3_4_1\build\include;$(ProjectDir)OpenFace-SDK\local\FaceAnalyser\include;$(ProjectDir)OpenFace-SDK\local\GazeAnalyser\include;$(ProjectDir)OpenFace-SDK\local\LandmarkDetector\include;$(ProjectDir)OpenFace-SDK\local\Utilities\include;$(ProjectDir)OpenFace-SDK\3rdParty\dlib\include;$(ProjectDir)OpenFace-SDK\3rdParty\boost;$(ProjectDir)OpenFace-SDK\3rdParty\boost\boost;$(ProjectDir)OpenFace-SDK\3rdParty\OpenBLAS\include;$(ProjectDir)OpenFace-SDK\3rdParty\tbb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\software\opencv_3_4_1\build\include;$(ProjectDir)OpenFace-SDK\local\FaceAnalyser\include;$(ProjectDir)OpenFace-SDK\local\GazeAnalyser\include;$(ProjectDir)OpenFace-SDK\local\LandmarkDetector\include;$(ProjectDir)OpenFace-SDK\local\Utilities\include;$(ProjectDir)OpenFace-SDK\3rdParty\dlib\include;$(ProjectDir)OpenFace-SDK\3rdParty\boost;$(ProjectDir)OpenFace-SDK\3rdParty\boost\boost;$(ProjectDir)OpenFace-SDK\3rdParty\OpenBLAS\include;$(ProjectDir)OpenFace-SDK\3rdParty\tbb\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
     </ClCompile>
     <Link>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalLibraryDirectories>D:\Libraries\opencv_3_4_1\build\x64\vc15\lib;$(ProjectDir)OpenFace-SDK\3rdParty\boost\x64\v141\lib;$(ProjectDir)OpenFace-SDK\3rdParty\OpenBLAS\lib\x64;$(ProjectDir)OpenFace-SDK\3rdParty\tbb\lib\x64\v141;$(ProjectDir)OpenFace-SDK\x64\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>D:\software\opencv_3_4_1\build\x64\vc15\lib;$(ProjectDir)OpenFace-SDK\3rdParty\boost\x64\v141\lib;$(ProjectDir)OpenFace-SDK\3rdParty\OpenBLAS\lib\x64;$(ProjectDir)OpenFace-SDK\3rdParty\tbb\lib\x64\v141;$(ProjectDir)OpenFace-SDK\x64\Release;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <AdditionalDependencies>opencv_world341.lib;libopenblas.dll.a;tbb.lib;libboost_filesystem-vc$(PlatformToolsetVersion)-mt-1_63.lib;dlib.lib;FaceAnalyser.lib;GazeAnalyser.lib;LandmarkDetector.lib;Utilities.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <PostBuildEvent>
