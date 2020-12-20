@@ -77,6 +77,9 @@ protected:
 	float former_headpose3D[6];
 	//头部姿态初始化标志
 	bool init_head = false;
+	//头部姿态变化标志
+	bool headpose_change = false;
+	int showBox;
 	//headpose
 	cv::Vec6d pose_estimate;
 	//x_left,y_left ,z_left ; x_right,y_right,z_right
@@ -118,6 +121,9 @@ protected:
 
 	//csv writer
 	std::ofstream outFile;
+	//csv initial sign
+	bool isInit = false;
+
 	//frame number
 	unsigned int frameNumber;
 	//检测成功的帧数
@@ -144,7 +150,7 @@ protected:
 		int startFrame = -1;		//眨眼开始帧号
 		int endFrame = -1;		//眨眼结束帧号
 		unsigned int blinkTimeSum = 0;		//这次眨眼以及之前的眨眼的持续时间之和（便于计算）
-											//unsigned int interval = 0;		//这次眨眼与上次的眨眼的间隔时间
+		//unsigned int interval = 0;		//这次眨眼与上次的眨眼的间隔时间
 	}blink;
 	//用于记录当前眨眼的状态，方便入队
 	blink currentBlink;
@@ -188,22 +194,7 @@ protected:
 		unsigned int interval = 0;
 	}gaze;
 	gaze currentGaze;
-	//扫视角度
 	float saccade_angle_sum;
-	//扫视距离
-	float saccade_dist_sum;
-	//gaze point at screen
-	float planeVector[3] = { 0,0,1 };
-	float planePoint[3] = { -1,0,0 };
-	float gazePoint[3];
-	float gazeLastpoint[3] = { 0,0,0 };
-	//计算扫视点
-	void GazePoint(cv::Mat1f tempMat);
-#pragma endregion
-
-#pragma region tired detection
-
-
 #pragma endregion
 
 	std::mutex output;
@@ -215,9 +206,6 @@ protected:
 
 	//calculate the distance of two landmarks in 3D
 	float GetDistance3D(int i, int j);
-
-	//calculate the distance of two gazePoint in 3D
-	float GetDistance3D(float gazePoint[], float gazeLastpoint[]);
 
 	//calculate the ear
 	float EyeAspectRatio(float a, float b, float c);
